@@ -1,0 +1,201 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg15-latest
+    container_name: ark_postgres
+    environment:
+      POSTGRES_DB: ark_tools
+      POSTGRES_USER: ark_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ark_secure_password_123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ark_admin -d ark_tools"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ark_network
+
+  # Redis for caching and session storage
+  redis:
+    image: redis:7-alpine
+    container_name: ark_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ark_network
+
+  # ARK-TOOLS API Service
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+      target: production
+    container_name: ark_api
+    environment:
+      # Database Configuration
+      ARK_DATABASE_URL: postgresql://ark_admin:${POSTGRES_PASSWORD:-ark_secure_password_123}@postgres:5432/ark_tools
+      ARK_REDIS_URL: redis://redis:6379/0
+      
+      # Security Configuration
+      ARK_SECRET_KEY: ${ARK_SECRET_KEY}
+      ARK_JWT_SECRET_KEY: ${ARK_JWT_SECRET_KEY}
+      
+      # AI Configuration
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      
+      # Feature Flags
+      ARK_ENABLE_WEBSOCKETS: "true"
+      ARK_ENABLE_MONITORING: "true"
+      ARK_ENABLE_SECURITY_SCAN: "true"
+      
+      # MAMS Integration
+      MAMS_BASE_PATH: /app/mams
+      
+      # Flask Configuration
+      FLASK_ENV: production
+      FLASK_DEBUG: "false"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+      - arkyvus_mams:/app/mams:ro  # Read-only mount of MAMS
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ark_network
+    restart: unless-stopped
+
+  # WebSocket Service (separate for scalability)
+  websocket:
+    build:
+      context: .
+      dockerfile: docker/websocket/Dockerfile
+    container_name: ark_websocket
+    environment:
+      ARK_REDIS_URL: redis://redis:6379/0
+      ARK_SECRET_KEY: ${ARK_SECRET_KEY}
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ark_network
+    restart: unless-stopped
+
+  # Nginx reverse proxy
+  nginx:
+    build:
+      context: ./docker/nginx
+      dockerfile: Dockerfile
+    container_name: ark_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - api
+      - websocket
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ark_network
+    restart: unless-stopped
+
+  # Prometheus monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ark_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - ark_network
+    restart: unless-stopped
+
+  # Grafana dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ark_grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    networks:
+      - ark_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  arkyvus_mams:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /Users/pregenie/Development/arkyvus_project/arkyvus
+
+networks:
+  ark_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

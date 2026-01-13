@@ -1,0 +1,507 @@
+---
+description: Initialize the complete ARK-TOOLS project structure with production standards
+allowed-tools: Bash, Write, Read
+model: opus-4.5-with-thinking
+session-label: main-ark-tools-init
+---
+# Context
+- Production Mode: Modernization with freedom to innovate
+- Quality Standards: TypeScript/Python type hints, SOLID principles
+- Error Handling: Comprehensive with recovery strategies
+- Testing: Integration-focused with parallel verification
+
+# Task
+Create the complete ARK-TOOLS project structure following production standards:
+
+1. Create core directory structure:
+```bash
+mkdir -p ark-tools/{database/{models,migrations,init},core/{discovery,analysis,transformation,mams_integration},web/{blueprints,static,templates},tests/{unit,integration,fixtures},docker,scripts,logs,.mcp/{commands,agents,hooks}}
+mkdir -p ark-tools/frontend/{src/{components,api,hooks,utils},public}
+```
+
+2. Initialize Python package structure with type hints:
+```python
+# ark-tools/__init__.py
+"""ARK-TOOLS - Intelligent Code Consolidation Platform
+Production-ready with modernization focus
+"""
+from typing import Final
+
+__version__: Final[str] = "2.0.0"
+__author__: Final[str] = "Arkyvus Team"
+
+# Production configuration
+PRODUCTION_MODE: Final[bool] = True
+ALLOW_BREAKING_CHANGES: Final[bool] = True  # Modernization mode
+```
+
+3. Create database models with full type annotations:
+```python
+# ark-tools/database/models/base.py
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, MetaData
+from sqlalchemy.orm import sessionmaker, Session
+from typing import Optional, Generator
+import logging
+
+# Production logging setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Naming convention for constraints (production standard)
+convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s"
+}
+
+metadata = MetaData(naming_convention=convention)
+Base = declarative_base(metadata=metadata)
+
+class DatabaseManager:
+    """Production-ready database management with error recovery"""
+    
+    def __init__(self, database_url: str):
+        self.engine = create_engine(
+            database_url,
+            pool_size=20,  # Production pool size
+            max_overflow=40,
+            pool_pre_ping=True,  # Verify connections
+            echo=False  # Production: no SQL echo
+        )
+        self.SessionLocal = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=self.engine
+        )
+    
+    def get_session(self) -> Generator[Session, None, None]:
+        """Get database session with automatic cleanup"""
+        session = self.SessionLocal()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Database error: {e}")
+            raise
+        finally:
+            session.close()
+```
+
+4. Create project model with comprehensive features:
+```python
+# ark-tools/database/models/project.py
+from sqlalchemy import Column, String, DateTime, JSON, Text, Boolean, Integer, Enum
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
+import uuid
+from datetime import datetime
+from typing import Dict, Any, Optional, List
+from enum import Enum as PyEnum
+from . import Base
+
+class ProjectStatus(PyEnum):
+    """Project lifecycle status"""
+    CREATED = "created"
+    DISCOVERING = "discovering"
+    ANALYZING = "analyzing"
+    TRANSFORMING = "transforming"
+    GENERATING = "generating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class Project(Base):
+    __tablename__ = 'projects'
+    
+    # Primary fields with indexes for performance
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    description = Column(Text)
+    root_path = Column(Text, nullable=False)
+    
+    # Status tracking
+    status = Column(Enum(ProjectStatus), default=ProjectStatus.CREATED, index=True)
+    
+    # Configuration with JSONB for better querying
+    config = Column(JSONB, default={})
+    
+    # Metrics and statistics
+    total_files = Column(Integer, default=0)
+    total_lines = Column(Integer, default=0)
+    patterns_found = Column(Integer, default=0)
+    duplicates_found = Column(Integer, default=0)
+    
+    # Timestamps with automatic updates
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_analysis_at = Column(DateTime)
+    
+    # Relationships
+    discoveries = relationship("Discovery", back_populates="project", cascade="all, delete-orphan")
+    analyses = relationship("Analysis", back_populates="project", cascade="all, delete-orphan")
+    transformations = relationship("Transformation", back_populates="project", cascade="all, delete-orphan")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API responses"""
+        return {
+            'id': str(self.id),
+            'name': self.name,
+            'description': self.description,
+            'root_path': self.root_path,
+            'status': self.status.value,
+            'config': self.config,
+            'metrics': {
+                'total_files': self.total_files,
+                'total_lines': self.total_lines,
+                'patterns_found': self.patterns_found,
+                'duplicates_found': self.duplicates_found
+            },
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+            'last_analysis_at': self.last_analysis_at.isoformat() if self.last_analysis_at else None
+        }
+```
+
+5. Create Flask application with production configuration:
+```python
+# ark-tools/web/app.py
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+from flask_socketio import SocketIO
+from flask_jwt_extended import JWTManager
+import os
+import logging
+from typing import Tuple, Dict, Any
+from datetime import timedelta
+
+# Production logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def create_app() -> Tuple[Flask, SocketIO]:
+    """Create Flask app with production configuration"""
+    app = Flask(__name__)
+    
+    # Production configuration
+    app.config.update(
+        SECRET_KEY=os.getenv('SECRET_KEY', 'CHANGE_IN_PRODUCTION'),
+        JWT_SECRET_KEY=os.getenv('JWT_SECRET_KEY', 'CHANGE_IN_PRODUCTION'),
+        JWT_ACCESS_TOKEN_EXPIRES=timedelta(hours=24),
+        MAX_CONTENT_LENGTH=100 * 1024 * 1024,  # 100MB max file size
+        JSON_SORT_KEYS=False,
+        PROPAGATE_EXCEPTIONS=True
+    )
+    
+    # Security headers
+    @app.after_request
+    def add_security_headers(response):
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        return response
+    
+    # CORS with specific origins in production
+    CORS(app, origins=os.getenv('ALLOWED_ORIGINS', '*').split(','))
+    
+    # JWT authentication
+    jwt = JWTManager(app)
+    
+    # WebSocket with authentication
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins="*",
+        logger=True,
+        engineio_logger=False,
+        async_mode='threading'
+    )
+    
+    # Health check endpoint
+    @app.route('/api/v1/health')
+    def health() -> Dict[str, Any]:
+        """Production health check with comprehensive status"""
+        try:
+            # Check database connection
+            from database.models.base import DatabaseManager
+            db = DatabaseManager(os.getenv('DATABASE_URL'))
+            with db.get_session() as session:
+                session.execute('SELECT 1')
+            db_status = 'healthy'
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            db_status = 'unhealthy'
+        
+        return jsonify({
+            'status': 'healthy' if db_status == 'healthy' else 'degraded',
+            'version': '2.0.0',
+            'timestamp': datetime.utcnow().isoformat(),
+            'checks': {
+                'database': db_status,
+                'api': 'healthy'
+            }
+        })
+    
+    # Error handling
+    @app.errorhandler(404)
+    def not_found(error):
+        return jsonify({'error': 'Resource not found'}), 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        logger.error(f"Internal error: {error}")
+        return jsonify({'error': 'Internal server error'}), 500
+    
+    # Register blueprints
+    try:
+        from .blueprints import projects, discovery, analysis, transformation
+        app.register_blueprint(projects.bp, url_prefix='/api/v1/projects')
+        app.register_blueprint(discovery.bp, url_prefix='/api/v1/discovery')
+        app.register_blueprint(analysis.bp, url_prefix='/api/v1/analysis')
+        app.register_blueprint(transformation.bp, url_prefix='/api/v1/transformation')
+        logger.info("All blueprints registered successfully")
+    except ImportError as e:
+        logger.warning(f"Some blueprints not available yet: {e}")
+    
+    return app, socketio
+
+if __name__ == '__main__':
+    app, socketio = create_app()
+    port = int(os.getenv('PORT', 5000))
+    socketio.run(app, debug=False, host='0.0.0.0', port=port)
+```
+
+6. Create requirements.txt with production dependencies:
+```
+# Core dependencies
+flask==3.0.0
+flask-cors==4.0.0
+flask-socketio==5.3.5
+flask-jwt-extended==4.5.3
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+redis==5.0.1
+celery==5.3.4
+alembic==1.13.1
+
+# Code analysis
+libcst==1.1.0
+ast-grep-py==0.12.1
+tree-sitter==0.20.4
+pygments==2.17.2
+
+# Vector search
+sentence-transformers==2.2.2
+pgvector==0.2.3
+
+# Development tools
+black==23.12.1
+isort==5.13.2
+mypy==1.8.0
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-asyncio==0.21.1
+
+# Monitoring
+prometheus-client==0.19.0
+sentry-sdk[flask]==1.39.1
+
+# Utilities
+pyyaml==6.0.1
+python-dotenv==1.0.0
+click==8.1.7
+rich==13.7.0
+```
+
+7. Create Docker configuration for production:
+```dockerfile
+# docker/Dockerfile.api
+FROM python:3.11-slim
+
+# Security: Run as non-root user
+RUN useradd -m -u 1000 arktools && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        postgresql-client \
+        && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install dependencies first (cache optimization)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY --chown=arktools:arktools ark-tools /app/ark-tools
+
+# Production environment variables
+ENV PYTHONPATH=/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER arktools
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:5000/api/v1/health')" || exit 1
+
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--threads", "2", "ark_tools.web.app:create_app()"]
+```
+
+8. Create testing structure:
+```python
+# ark-tools/tests/conftest.py
+import pytest
+from typing import Generator
+from flask import Flask
+from flask.testing import FlaskClient
+import tempfile
+import os
+
+@pytest.fixture
+def app() -> Generator[Flask, None, None]:
+    """Create test application"""
+    os.environ['TESTING'] = 'true'
+    os.environ['DATABASE_URL'] = 'postgresql://test:test@localhost:5432/ark_test'
+    
+    from ark_tools.web.app import create_app
+    app, _ = create_app()
+    app.config['TESTING'] = True
+    
+    yield app
+
+@pytest.fixture
+def client(app: Flask) -> FlaskClient:
+    """Create test client"""
+    return app.test_client()
+
+@pytest.fixture
+def temp_project_dir() -> Generator[str, None, None]:
+    """Create temporary project directory for testing"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create sample project structure
+        os.makedirs(f"{tmpdir}/src/services")
+        with open(f"{tmpdir}/src/services/user.py", 'w') as f:
+            f.write("def get_user(id): return {'id': id}")
+        yield tmpdir
+```
+
+9. Create initialization script:
+```bash
+#!/bin/bash
+# scripts/init.sh
+
+echo "🚀 Initializing ARK-TOOLS Production Environment"
+
+# Check prerequisites
+command -v docker >/dev/null 2>&1 || { echo "Docker required but not installed. Aborting." >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "Python 3 required but not installed. Aborting." >&2; exit 1; }
+
+# Create environment file if not exists
+if [ ! -f .env ]; then
+    echo "Creating .env file..."
+    cat > .env << EOF
+# Production Configuration
+SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+JWT_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+DATABASE_URL=postgresql://ark_admin:secure_password@postgres:5432/ark_tools
+REDIS_URL=redis://redis:6379/0
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:80
+SENTRY_DSN=
+EOF
+fi
+
+# Initialize database
+echo "Initializing database..."
+docker-compose up -d postgres
+sleep 5
+docker-compose exec postgres psql -U ark_admin -d ark_tools -c "CREATE EXTENSION IF NOT EXISTS pgvector;"
+
+# Run migrations
+echo "Running database migrations..."
+docker-compose run --rm api alembic upgrade head
+
+echo "✅ ARK-TOOLS initialized successfully!"
+echo "Run 'docker-compose up' to start the application"
+```
+
+10. Create git configuration:
+```
+# .gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.env.*
+!.env.example
+.ark_output/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+logs/
+*.log
+.DS_Store
+node_modules/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+```
+
+11. Verify setup and provide next steps:
+```bash
+# Run verification
+echo "🔍 Verifying ARK-TOOLS setup..."
+python3 -c "import sys; sys.path.insert(0, 'ark-tools'); import ark_tools; print(f'✅ Version: {ark_tools.__version__}')"
+
+# Check directory structure
+if [ -d "ark-tools" ] && [ -d "ark-tools/database" ] && [ -d "ark-tools/core" ]; then
+    echo "✅ Directory structure created"
+else
+    echo "❌ Directory structure incomplete"
+fi
+
+# Output success message
+echo """
+╔══════════════════════════════════════════════════════════════╗
+║          ARK-TOOLS Project Successfully Initialized!         ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Next Steps:                                                 ║
+║  1. Run: docker-compose up                                  ║
+║  2. Visit: http://localhost:5002/api/v1/health              ║
+║  3. Use: /scaffold-module to create your first module       ║
+║  4. Run: /ark-test to verify everything works               ║
+║                                                              ║
+║  Production Standards Applied:                              ║
+║  ✓ Type hints throughout                                    ║
+║  ✓ Comprehensive error handling                             ║
+║  ✓ Integration testing ready                                ║
+║  ✓ Security headers configured                              ║
+║  ✓ Monitoring ready (Prometheus + Sentry)                   ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+"""
+```
+
+# Verification
+After running this command:
+1. Check that all directories exist
+2. Verify Python imports work
+3. Ensure Docker containers can be built
+4. Run health check endpoint
+5. Execute /ark-test for integration verification

@@ -1,0 +1,517 @@
+---
+description: Deploy ARK-TOOLS to production environment with safety checks and monitoring
+allowed-tools: Bash, Read, Write
+model: opus-4.5-with-thinking
+session-label: main-deploy-{environment}
+---
+# Context
+- Environment: {{environment|default:staging}}
+- Version: {{version|default:latest}}
+- Safety Checks: {{safety_checks|default:true}}
+- Backup Strategy: {{backup|default:true}}
+
+# Parameters
+- environment: {{environment|default:staging}}
+- version: {{version|default:latest}}
+- replicas: {{replicas|default:2}}
+- health_check_timeout: {{health_check_timeout|default:300}}
+- rollback_on_failure: {{rollback_on_failure|default:true}}
+
+# Task
+Deploy ARK-TOOLS with production safety measures:
+
+1. Pre-deployment Validation:
+```bash
+echo "🔍 Pre-deployment Validation"
+echo "================================"
+
+# Check environment
+if [[ "{{environment}}" != "staging" && "{{environment}}" != "production" ]]; then
+    echo "❌ Invalid environment: {{environment}}"
+    echo "Valid environments: staging, production"
+    exit 1
+fi
+
+# Verify Docker images exist
+echo "📦 Checking Docker images..."
+if ! docker image inspect ark-tools/api:{{version}} >/dev/null 2>&1; then
+    echo "❌ API image not found: ark-tools/api:{{version}}"
+    exit 1
+fi
+
+if ! docker image inspect ark-tools/frontend:{{version}} >/dev/null 2>&1; then
+    echo "❌ Frontend image not found: ark-tools/frontend:{{version}}"
+    exit 1
+fi
+
+echo "✅ All Docker images available"
+
+# Check resource availability
+echo "💾 Checking system resources..."
+AVAILABLE_MEMORY=$(free -m | awk 'NR==2{print $7}')
+REQUIRED_MEMORY=4096
+
+if [[ $AVAILABLE_MEMORY -lt $REQUIRED_MEMORY ]]; then
+    echo "⚠️ Warning: Available memory ($AVAILABLE_MEMORY MB) below recommended ($REQUIRED_MEMORY MB)"
+fi
+
+DISK_USAGE=$(df / | awk 'NR==2{print $5}' | sed 's/%//')
+if [[ $DISK_USAGE -gt 80 ]]; then
+    echo "⚠️ Warning: Disk usage high ($DISK_USAGE%)"
+fi
+
+echo "✅ Resource check complete"
+```
+
+2. Environment Configuration:
+```bash
+echo "⚙️ Environment Configuration"
+echo "=============================="
+
+# Create environment-specific config
+ENV_FILE=".env.{{environment}}"
+
+cat > $ENV_FILE << EOF
+# ARK-TOOLS {{environment|upper}} Configuration
+ENVIRONMENT={{environment}}
+VERSION={{version}}
+REPLICAS={{replicas}}
+
+# Database Configuration
+DATABASE_URL=postgresql://ark_admin:\${DB_PASSWORD}@postgres:5432/ark_tools_{{environment}}
+REDIS_URL=redis://redis:6379/{{environment == "production" and "0" or "1"}}
+
+# Security
+SECRET_KEY=\${SECRET_KEY}
+JWT_SECRET_KEY=\${JWT_SECRET_KEY}
+ALLOWED_ORIGINS={% if environment == "production" %}https://ark-tools.yourdomain.com{% else %}http://localhost:3000,http://staging.ark-tools.internal{% endif %}
+
+# Monitoring
+SENTRY_DSN=\${SENTRY_DSN}
+PROMETHEUS_ENABLED=true
+LOG_LEVEL={% if environment == "production" %}INFO{% else %}DEBUG{% endif %}
+
+# Performance
+WORKER_PROCESSES={{replicas}}
+WORKER_THREADS=4
+MAX_UPLOAD_SIZE=100MB
+RATE_LIMIT_ENABLED={% if environment == "production" %}true{% else %}false{% endif %}
+
+# Features
+ENABLE_MAMS_ANALYSIS=true
+ENABLE_VECTOR_SEARCH=true
+ENABLE_WEBSOCKETS=true
+EOF
+
+echo "✅ Environment configuration created: $ENV_FILE"
+```
+
+3. Backup Current Deployment:
+```bash
+{% if backup %}
+echo "💾 Creating Backup"
+echo "=================="
+
+BACKUP_DIR="backups/pre-deploy-$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+
+# Backup database
+echo "📊 Backing up database..."
+if docker-compose -f docker-compose.{{environment}}.yml ps postgres | grep -q "Up"; then
+    docker-compose -f docker-compose.{{environment}}.yml exec -T postgres pg_dump -U ark_admin ark_tools_{{environment}} > "$BACKUP_DIR/database.sql"
+    echo "✅ Database backup complete"
+else
+    echo "⚠️ Database container not running, skipping backup"
+fi
+
+# Backup configuration
+echo "⚙️ Backing up configuration..."
+cp docker-compose.{{environment}}.yml "$BACKUP_DIR/"
+cp .env.{{environment}} "$BACKUP_DIR/" 2>/dev/null || true
+cp -r nginx/ "$BACKUP_DIR/" 2>/dev/null || true
+
+# Backup logs
+echo "📝 Backing up logs..."
+mkdir -p "$BACKUP_DIR/logs"
+docker-compose -f docker-compose.{{environment}}.yml logs > "$BACKUP_DIR/logs/container-logs.txt" 2>&1
+
+echo "✅ Backup complete: $BACKUP_DIR"
+echo "   Database: $BACKUP_DIR/database.sql"
+echo "   Config: $BACKUP_DIR/docker-compose.{{environment}}.yml"
+{% endif %}
+```
+
+4. Blue-Green Deployment Strategy:
+```bash
+echo "🚀 Starting Blue-Green Deployment"
+echo "================================="
+
+# Determine current and new colors
+CURRENT_COLOR=$(docker-compose -f docker-compose.{{environment}}.yml ps --format "table {{.Service}}" | grep -E "(blue|green)" | head -1 | grep -o -E "(blue|green)" || echo "blue")
+if [[ "$CURRENT_COLOR" == "blue" ]]; then
+    NEW_COLOR="green"
+else
+    NEW_COLOR="blue"
+fi
+
+echo "Current deployment: $CURRENT_COLOR"
+echo "New deployment: $NEW_COLOR"
+
+# Create new compose file for the new color
+sed "s/ark-tools-api:/ark-tools-api-$NEW_COLOR:/g; s/ark-tools-frontend:/ark-tools-frontend-$NEW_COLOR:/g" \
+    docker-compose.{{environment}}.yml > docker-compose.{{environment}}-${NEW_COLOR}.yml
+
+# Update image tags
+sed -i "s/:latest/:{{version}}/g" docker-compose.{{environment}}-${NEW_COLOR}.yml
+
+# Deploy new version
+echo "📦 Deploying new version ($NEW_COLOR)..."
+docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml up -d
+
+# Wait for health checks
+echo "🏥 Waiting for health checks..."
+HEALTH_CHECK_URL="http://localhost:$(docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml port api 5000 | cut -d: -f2)/api/v1/health"
+
+for i in {1..{{health_check_timeout}}}; do
+    if curl -sf "$HEALTH_CHECK_URL" >/dev/null 2>&1; then
+        echo "✅ Health check passed after ${i} seconds"
+        break
+    fi
+    
+    if [[ $i -eq {{health_check_timeout}} ]]; then
+        echo "❌ Health check failed after {{health_check_timeout}} seconds"
+        {% if rollback_on_failure %}
+        echo "🔄 Rolling back..."
+        docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml down
+        exit 1
+        {% else %}
+        echo "⚠️ Continuing despite health check failure"
+        {% endif %}
+    fi
+    
+    sleep 1
+done
+```
+
+5. Traffic Migration:
+```bash
+echo "🌐 Migrating Traffic"
+echo "==================="
+
+# Update load balancer configuration
+if command -v nginx >/dev/null 2>&1; then
+    # Update nginx upstream
+    NEW_PORT=$(docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml port api 5000 | cut -d: -f2)
+    
+    # Create new nginx config
+    sed "s/server 127.0.0.1:.*;/server 127.0.0.1:$NEW_PORT;/" \
+        nginx/nginx.conf > nginx/nginx.conf.new
+    
+    # Test nginx config
+    if nginx -t -c $(pwd)/nginx/nginx.conf.new; then
+        mv nginx/nginx.conf.new nginx/nginx.conf
+        nginx -s reload
+        echo "✅ Nginx configuration updated"
+    else
+        echo "❌ Nginx configuration test failed"
+        rm nginx/nginx.conf.new
+        {% if rollback_on_failure %}
+        exit 1
+        {% endif %}
+    fi
+fi
+
+# Gradual traffic migration (if using external load balancer)
+if [[ "{{environment}}" == "production" ]]; then
+    echo "🔄 Gradual traffic migration..."
+    
+    # 10% traffic
+    echo "   10% traffic to $NEW_COLOR..."
+    # External load balancer command would go here
+    sleep 30
+    
+    # Check error rates
+    ERROR_RATE=$(check_error_rate "$NEW_COLOR" || echo "unknown")
+    if [[ "$ERROR_RATE" != "unknown" && "$ERROR_RATE" -gt 5 ]]; then
+        echo "❌ High error rate detected: $ERROR_RATE%"
+        {% if rollback_on_failure %}
+        echo "🔄 Rolling back..."
+        rollback_deployment "$NEW_COLOR" "$CURRENT_COLOR"
+        exit 1
+        {% endif %}
+    fi
+    
+    # 50% traffic
+    echo "   50% traffic to $NEW_COLOR..."
+    sleep 60
+    
+    # 100% traffic
+    echo "   100% traffic to $NEW_COLOR..."
+fi
+
+echo "✅ Traffic migration complete"
+```
+
+6. Post-deployment Validation:
+```bash
+echo "✅ Post-deployment Validation"
+echo "============================="
+
+# Comprehensive health check
+echo "🏥 Running comprehensive health checks..."
+
+# API Health
+API_HEALTH=$(curl -sf "$HEALTH_CHECK_URL" | jq -r '.status' 2>/dev/null || echo "unknown")
+if [[ "$API_HEALTH" == "healthy" ]]; then
+    echo "✅ API health: $API_HEALTH"
+else
+    echo "❌ API health: $API_HEALTH"
+    VALIDATION_FAILED=true
+fi
+
+# Database connectivity
+DB_HEALTH=$(curl -sf "$HEALTH_CHECK_URL" | jq -r '.checks.database' 2>/dev/null || echo "unknown")
+if [[ "$DB_HEALTH" == "ok" ]]; then
+    echo "✅ Database connectivity: $DB_HEALTH"
+else
+    echo "❌ Database connectivity: $DB_HEALTH"
+    VALIDATION_FAILED=true
+fi
+
+# Redis connectivity
+REDIS_HEALTH=$(curl -sf "$HEALTH_CHECK_URL" | jq -r '.checks.redis' 2>/dev/null || echo "unknown")
+if [[ "$REDIS_HEALTH" == "ok" ]]; then
+    echo "✅ Redis connectivity: $REDIS_HEALTH"
+else
+    echo "❌ Redis connectivity: $REDIS_HEALTH"
+    VALIDATION_FAILED=true
+fi
+
+# Test key functionality
+echo "🧪 Testing key functionality..."
+
+# Test project creation
+TEST_RESULT=$(curl -sf -X POST -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TEST_JWT" \
+    -d '{"name":"test-deploy","description":"Deployment test"}' \
+    "$HEALTH_CHECK_URL/projects" | jq -r '.id' 2>/dev/null || echo "failed")
+
+if [[ "$TEST_RESULT" != "failed" && "$TEST_RESULT" != "null" ]]; then
+    echo "✅ Project creation: working"
+    
+    # Cleanup test project
+    curl -sf -X DELETE -H "Authorization: Bearer $TEST_JWT" \
+        "$HEALTH_CHECK_URL/projects/$TEST_RESULT" >/dev/null 2>&1
+else
+    echo "❌ Project creation: failed"
+    VALIDATION_FAILED=true
+fi
+
+# Test MAMS integration
+MAMS_TEST=$(docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml exec -T api \
+    python -c "import sys; sys.path.insert(0, '/app/ark-tools/arkyvus/migrations'); from extractors.component_extractor import ComponentExtractor; print('ok')" 2>/dev/null || echo "failed")
+
+if [[ "$MAMS_TEST" == "ok" ]]; then
+    echo "✅ MAMS integration: working"
+else
+    echo "❌ MAMS integration: failed"
+    VALIDATION_FAILED=true
+fi
+
+# Check if validation failed
+if [[ "$VALIDATION_FAILED" == "true" ]]; then
+    echo "❌ Post-deployment validation failed"
+    {% if rollback_on_failure %}
+    echo "🔄 Rolling back due to validation failures..."
+    rollback_deployment "$NEW_COLOR" "$CURRENT_COLOR"
+    exit 1
+    {% else %}
+    echo "⚠️ Continuing despite validation failures"
+    {% endif %}
+fi
+```
+
+7. Cleanup Old Deployment:
+```bash
+echo "🧹 Cleaning Up Old Deployment"
+echo "============================="
+
+if [[ "$VALIDATION_FAILED" != "true" ]]; then
+    # Stop old deployment
+    echo "🛑 Stopping old deployment ($CURRENT_COLOR)..."
+    docker-compose -f docker-compose.{{environment}}-${CURRENT_COLOR}.yml down
+    
+    # Remove old images (keep last 2 versions)
+    echo "🗑️ Cleaning up old images..."
+    docker images ark-tools/api --format "table {{.Repository}}:{{.Tag}}" | grep -v "{{version}}" | tail -n +3 | while read image; do
+        if [[ "$image" != "REPOSITORY:TAG" ]]; then
+            docker rmi "$image" 2>/dev/null || true
+        fi
+    done
+    
+    # Clean up old compose files
+    rm -f docker-compose.{{environment}}-${CURRENT_COLOR}.yml
+    
+    echo "✅ Cleanup complete"
+else
+    echo "⚠️ Skipping cleanup due to validation issues"
+fi
+```
+
+8. Monitoring Setup:
+```bash
+echo "📊 Setting Up Monitoring"
+echo "======================="
+
+# Update monitoring configuration
+cat > monitoring/prometheus.yml << EOF
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'ark-tools-api'
+    static_configs:
+      - targets: ['localhost:$(docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml port api 5000 | cut -d: -f2)']
+    metrics_path: /api/v1/metrics
+
+  - job_name: 'ark-tools-frontend'
+    static_configs:
+      - targets: ['localhost:$(docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml port frontend 3000 | cut -d: -f2)']
+EOF
+
+# Start monitoring stack
+if [[ "{{environment}}" == "production" ]]; then
+    docker-compose -f monitoring/docker-compose.yml up -d
+    echo "✅ Monitoring stack started"
+fi
+
+# Setup log aggregation
+if command -v filebeat >/dev/null 2>&1; then
+    # Configure filebeat for log shipping
+    cat > filebeat/filebeat.yml << EOF
+filebeat.inputs:
+- type: docker
+  containers.ids:
+    - $(docker-compose -f docker-compose.{{environment}}-${NEW_COLOR}.yml ps -q)
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "ark-tools-{{environment}}-%{+yyyy.MM.dd}"
+EOF
+    
+    systemctl restart filebeat
+    echo "✅ Log aggregation configured"
+fi
+```
+
+9. Rollback Function:
+```bash
+# Rollback function
+rollback_deployment() {
+    local new_color=$1
+    local old_color=$2
+    
+    echo "🔄 Rolling back from $new_color to $old_color"
+    
+    # Stop new deployment
+    docker-compose -f docker-compose.{{environment}}-${new_color}.yml down
+    
+    # Start old deployment
+    docker-compose -f docker-compose.{{environment}}-${old_color}.yml up -d
+    
+    # Restore nginx config
+    if [[ -f nginx/nginx.conf.backup ]]; then
+        mv nginx/nginx.conf.backup nginx/nginx.conf
+        nginx -s reload
+    fi
+    
+    # Restore database if needed
+    if [[ -f "$BACKUP_DIR/database.sql" ]]; then
+        echo "🗃️ Database rollback available: $BACKUP_DIR/database.sql"
+        echo "Run manually if needed: docker-compose exec postgres psql -U ark_admin ark_tools_{{environment}} < $BACKUP_DIR/database.sql"
+    fi
+    
+    echo "✅ Rollback complete"
+}
+
+# Error rate checking function
+check_error_rate() {
+    local color=$1
+    # This would integrate with your monitoring system
+    # Return error rate percentage
+    echo "0"  # Placeholder
+}
+```
+
+10. Deployment Summary:
+```bash
+echo """
+╔══════════════════════════════════════════════════════════════╗
+║                 Deployment Complete                         ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Environment: {{environment}}                                               ║
+║  Version: {{version}}                                                   ║
+║  Deployment: $NEW_COLOR                                      ║
+║  Replicas: {{replicas}}                                                    ║
+║                                                              ║
+║  Health Status:                                             ║
+║  • API: $API_HEALTH                                         ║
+║  • Database: $DB_HEALTH                                     ║
+║  • Redis: $REDIS_HEALTH                                     ║
+║  • MAMS: $MAMS_TEST                                         ║
+║                                                              ║
+║  Monitoring:                                                ║
+║  • Prometheus: http://localhost:9090                        ║
+║  • Grafana: http://localhost:3001                           ║
+║  • Logs: filebeat -> elasticsearch                          ║
+║                                                              ║
+║  Backup Location: $BACKUP_DIR                               ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+🎉 ARK-TOOLS {{version}} deployed successfully to {{environment}}!
+
+Next Steps:
+• Monitor metrics and logs
+• Run integration tests
+• Update documentation
+• Notify team of deployment
+"""
+
+# Save deployment metadata
+cat > deployments/{{environment}}-$(date +%Y%m%d_%H%M%S).json << EOF
+{
+    "timestamp": "$(date -Iseconds)",
+    "environment": "{{environment}}",
+    "version": "{{version}}",
+    "deployment_color": "$NEW_COLOR",
+    "backup_location": "$BACKUP_DIR",
+    "validation_status": "${VALIDATION_FAILED:-false}",
+    "health_checks": {
+        "api": "$API_HEALTH",
+        "database": "$DB_HEALTH",
+        "redis": "$REDIS_HEALTH",
+        "mams": "$MAMS_TEST"
+    }
+}
+EOF
+```
+
+# Error Handling
+If deployment fails at any stage:
+1. Automatic rollback (if enabled)
+2. Preserve backup data
+3. Generate failure report
+4. Alert operations team
+5. Provide recovery instructions
+
+# Success Criteria
+✅ Pre-deployment validation passes
+✅ Images deployed successfully
+✅ Health checks pass within timeout
+✅ Traffic migration completes
+✅ Post-deployment validation passes
+✅ Monitoring configured
+✅ Old deployment cleaned up
+✅ Deployment metadata recorded

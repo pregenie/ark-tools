@@ -1,0 +1,422 @@
+---
+description: Run MAMS-based code analysis on a directory with pattern detection and duplication finding
+allowed-tools: Bash, Read, Write, Task
+model: opus-4.5-with-thinking
+session-label: main-analyze-{directory}
+---
+# Context
+- Target Directory: {{directory}}
+- Analysis Type: {{type|default:comprehensive}}
+- Project ID: {{project_id|default:auto-generate}}
+- MAMS Path: /app/ark-tools/arkyvus/migrations
+- Output Format: {{format|default:json}}
+
+# Parameters
+- directory: {{directory}}
+- recursive: {{recursive|default:true}}
+- languages: {{languages|default:python,typescript,javascript}}
+- min_similarity: {{min_similarity|default:0.85}}
+- save_to_db: {{save_to_db|default:true}}
+
+# Task
+Perform comprehensive code analysis using MAMS components:
+
+1. Initialize Analysis Environment:
+```python
+import sys
+import os
+from pathlib import Path
+import json
+import hashlib
+from datetime import datetime
+from uuid import uuid4
+
+# Add MAMS to path
+sys.path.insert(0, '/app/ark-tools/arkyvus/migrations')
+
+# Import MAMS components
+from extractors.component_extractor import ComponentExtractor
+from validators.dependency_validator import DependencyValidator
+from discovery.file_discovery import discover_files
+
+# Initialize components
+extractor = ComponentExtractor()
+validator = DependencyValidator()
+
+# Setup analysis
+analysis_id = str(uuid4())
+project_id = "{{project_id}}" if "{{project_id}}" != "auto-generate" else str(uuid4())
+target_dir = Path("{{directory}}")
+
+print(f"🔍 Starting Analysis")
+print(f"   Analysis ID: {analysis_id}")
+print(f"   Project ID: {project_id}")
+print(f"   Target: {target_dir}")
+print(f"   Type: {{type}}")
+```
+
+2. Discovery Phase:
+```python
+# Discover all relevant files
+print("\n📂 Discovery Phase")
+print("=" * 60)
+
+discovered_files = []
+language_map = {
+    '.py': 'python',
+    '.ts': 'typescript',
+    '.tsx': 'typescript',
+    '.js': 'javascript',
+    '.jsx': 'javascript'
+}
+
+# Scan directory
+for lang_ext, lang_name in language_map.items():
+    if lang_name in "{{languages}}".split(','):
+        files = list(target_dir.rglob(f"*{lang_ext}"))
+        for file_path in files:
+            # Skip test files and node_modules
+            if 'test' in str(file_path).lower() or 'node_modules' in str(file_path):
+                continue
+                
+            file_info = {
+                'path': str(file_path),
+                'language': lang_name,
+                'size': file_path.stat().st_size,
+                'hash': hashlib.sha256(file_path.read_bytes()).hexdigest()
+            }
+            discovered_files.append(file_info)
+
+print(f"✅ Discovered {len(discovered_files)} files")
+for lang in set(f['language'] for f in discovered_files):
+    count = len([f for f in discovered_files if f['language'] == lang])
+    print(f"   - {lang}: {count} files")
+```
+
+3. Extraction Phase:
+```python
+# Extract components from each file
+print("\n🔧 Extraction Phase")
+print("=" * 60)
+
+all_components = []
+extraction_errors = []
+
+for file_info in discovered_files:
+    try:
+        if file_info['language'] == 'python':
+            # Use MAMS extractor for Python
+            components = extractor.extract(file_info['path'])
+            for component in components:
+                component['file'] = file_info['path']
+                component['language'] = file_info['language']
+                all_components.append(component)
+        
+        # Add extractors for other languages as needed
+        
+    except Exception as e:
+        extraction_errors.append({
+            'file': file_info['path'],
+            'error': str(e)
+        })
+
+print(f"✅ Extracted {len(all_components)} components")
+print(f"   - Functions: {len([c for c in all_components if c.get('type') == 'function'])}")
+print(f"   - Classes: {len([c for c in all_components if c.get('type') == 'class'])}")
+print(f"   - Methods: {len([c for c in all_components if c.get('type') == 'method'])}")
+
+if extraction_errors:
+    print(f"⚠️  {len(extraction_errors)} files had extraction errors")
+```
+
+4. Pattern Detection:
+```python
+# Detect patterns in extracted components
+print("\n🎯 Pattern Detection")
+print("=" * 60)
+
+patterns = {
+    'api_endpoints': [],
+    'service_functions': [],
+    'data_models': [],
+    'utilities': [],
+    'ghost_helpers': []
+}
+
+for component in all_components:
+    name = component.get('name', '').lower()
+    
+    # API endpoint detection
+    if any(keyword in name for keyword in ['route', 'endpoint', 'api', 'handler']):
+        patterns['api_endpoints'].append(component)
+    
+    # Service function detection
+    elif any(keyword in name for keyword in ['service', 'process', 'handle', 'execute']):
+        patterns['service_functions'].append(component)
+    
+    # Data model detection
+    elif any(keyword in name for keyword in ['model', 'schema', 'entity', 'dto']):
+        patterns['data_models'].append(component)
+    
+    # Utility detection
+    elif any(keyword in name for keyword in ['util', 'helper', 'format', 'parse', 'validate']):
+        patterns['utilities'].append(component)
+    
+    # Ghost helpers (standalone functions not in classes)
+    elif component.get('type') == 'function' and not component.get('parent_class'):
+        patterns['ghost_helpers'].append(component)
+
+for pattern_type, components in patterns.items():
+    if components:
+        print(f"✅ {pattern_type}: {len(components)} found")
+```
+
+5. Duplicate Detection:
+```python
+# Find duplicate and similar code
+print("\n🔍 Duplicate Detection")  
+print("=" * 60)
+
+from difflib import SequenceMatcher
+
+duplicates = []
+near_duplicates = []
+
+# Compare all components pairwise
+for i, comp1 in enumerate(all_components):
+    for comp2 in all_components[i+1:]:
+        if 'code' in comp1 and 'code' in comp2:
+            similarity = SequenceMatcher(None, comp1['code'], comp2['code']).ratio()
+            
+            if similarity == 1.0:
+                duplicates.append({
+                    'file1': comp1['file'],
+                    'name1': comp1['name'],
+                    'file2': comp2['file'],
+                    'name2': comp2['name'],
+                    'similarity': similarity
+                })
+            elif similarity >= {{min_similarity}}:
+                near_duplicates.append({
+                    'file1': comp1['file'],
+                    'name1': comp1['name'],
+                    'file2': comp2['file'],
+                    'name2': comp2['name'],
+                    'similarity': similarity
+                })
+
+print(f"✅ Exact duplicates: {len(duplicates)}")
+print(f"✅ Near duplicates (>{{{min_similarity}}}): {len(near_duplicates)}")
+
+# Show top duplicates
+if near_duplicates:
+    print("\n📊 Top Similar Code Blocks:")
+    for dup in sorted(near_duplicates, key=lambda x: x['similarity'], reverse=True)[:5]:
+        print(f"   {dup['similarity']:.1%}: {dup['name1']} ↔ {dup['name2']}")
+```
+
+6. Complexity Analysis:
+```python
+# Calculate code complexity metrics
+print("\n📈 Complexity Analysis")
+print("=" * 60)
+
+import ast
+
+complexity_scores = []
+
+for component in all_components:
+    if component.get('language') == 'python' and 'code' in component:
+        try:
+            tree = ast.parse(component['code'])
+            
+            # Simple cyclomatic complexity calculation
+            complexity = 1  # Base complexity
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.If, ast.While, ast.For, ast.ExceptHandler)):
+                    complexity += 1
+                elif isinstance(node, ast.BoolOp):
+                    complexity += len(node.values) - 1
+            
+            complexity_scores.append({
+                'component': component['name'],
+                'file': component['file'],
+                'complexity': complexity
+            })
+        except:
+            pass
+
+if complexity_scores:
+    avg_complexity = sum(c['complexity'] for c in complexity_scores) / len(complexity_scores)
+    max_complexity = max(c['complexity'] for c in complexity_scores)
+    
+    print(f"📊 Complexity Metrics:")
+    print(f"   Average: {avg_complexity:.1f}")
+    print(f"   Maximum: {max_complexity}")
+    print(f"   High complexity (>10): {len([c for c in complexity_scores if c['complexity'] > 10])}")
+    
+    # Show most complex components
+    print("\n⚠️  Most Complex Components:")
+    for item in sorted(complexity_scores, key=lambda x: x['complexity'], reverse=True)[:5]:
+        print(f"   {item['complexity']:3d} - {item['component']}")
+```
+
+7. Consolidation Opportunities:
+```python
+# Identify consolidation opportunities
+print("\n💡 Consolidation Opportunities")
+print("=" * 60)
+
+consolidation_groups = []
+
+# Group similar service functions
+service_groups = {}
+for comp in patterns['service_functions']:
+    # Extract domain from name (e.g., user_service -> user)
+    domain = comp['name'].split('_')[0] if '_' in comp['name'] else comp['name'][:4]
+    if domain not in service_groups:
+        service_groups[domain] = []
+    service_groups[domain].append(comp)
+
+for domain, components in service_groups.items():
+    if len(components) > 1:
+        consolidation_groups.append({
+            'type': 'service_consolidation',
+            'domain': domain,
+            'components': len(components),
+            'files': list(set(c['file'] for c in components))
+        })
+
+print(f"✅ Found {len(consolidation_groups)} consolidation opportunities")
+for group in consolidation_groups:
+    print(f"   - {group['domain']}: {group['components']} components across {len(group['files'])} files")
+```
+
+8. Generate Analysis Report:
+```python
+# Generate comprehensive report
+analysis_results = {
+    'analysis_id': analysis_id,
+    'project_id': project_id,
+    'timestamp': datetime.now().isoformat(),
+    'target_directory': str(target_dir),
+    'summary': {
+        'total_files': len(discovered_files),
+        'total_components': len(all_components),
+        'extraction_errors': len(extraction_errors)
+    },
+    'languages': {
+        lang: len([f for f in discovered_files if f['language'] == lang])
+        for lang in set(f['language'] for f in discovered_files)
+    },
+    'patterns': {
+        pattern_type: len(components)
+        for pattern_type, components in patterns.items()
+    },
+    'duplicates': {
+        'exact': len(duplicates),
+        'near': len(near_duplicates),
+        'top_duplicates': near_duplicates[:10] if near_duplicates else []
+    },
+    'complexity': {
+        'average': avg_complexity if complexity_scores else 0,
+        'maximum': max_complexity if complexity_scores else 0,
+        'high_complexity_count': len([c for c in complexity_scores if c['complexity'] > 10])
+    },
+    'consolidation_opportunities': consolidation_groups,
+    'recommendations': []
+}
+
+# Add recommendations
+if len(duplicates) > 10:
+    analysis_results['recommendations'].append({
+        'priority': 'high',
+        'type': 'duplication',
+        'message': f'High duplication detected ({len(duplicates)} exact duplicates). Consider consolidation.'
+    })
+
+if len(patterns['ghost_helpers']) > 20:
+    analysis_results['recommendations'].append({
+        'priority': 'medium',
+        'type': 'organization',
+        'message': f'{len(patterns["ghost_helpers"])} standalone helper functions found. Consider grouping into utility modules.'
+    })
+```
+
+9. Save Results:
+```python
+# Save analysis results
+output_file = f"analysis_results_{analysis_id}.{{format}}"
+
+{% if format == "json" %}
+with open(output_file, 'w') as f:
+    json.dump(analysis_results, f, indent=2)
+print(f"\n💾 Results saved to: {output_file}")
+{% elif format == "markdown" %}
+# Generate markdown report
+with open(output_file, 'w') as f:
+    f.write(f"# Code Analysis Report\n\n")
+    f.write(f"**Analysis ID**: {analysis_id}\n")
+    f.write(f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    f.write(f"**Target**: {target_dir}\n\n")
+    
+    f.write("## Summary\n\n")
+    f.write(f"- Total Files: {analysis_results['summary']['total_files']}\n")
+    f.write(f"- Total Components: {analysis_results['summary']['total_components']}\n\n")
+    
+    f.write("## Patterns Found\n\n")
+    for pattern, count in analysis_results['patterns'].items():
+        f.write(f"- {pattern}: {count}\n")
+    
+    f.write("\n## Recommendations\n\n")
+    for rec in analysis_results['recommendations']:
+        f.write(f"- **{rec['priority'].upper()}**: {rec['message']}\n")
+
+print(f"\n📄 Markdown report saved to: {output_file}")
+{% endif %}
+```
+
+10. Store in Database (if enabled):
+```python
+{% if save_to_db %}
+print("\n💾 Saving to database...")
+
+from database.models.base import DatabaseManager
+from database.models.analysis import Analysis
+
+try:
+    db = DatabaseManager(os.getenv('DATABASE_URL'))
+    with db.get_session() as session:
+        analysis = Analysis(
+            id=analysis_id,
+            project_id=project_id,
+            status='completed',
+            results=analysis_results,
+            completed_at=datetime.now()
+        )
+        session.add(analysis)
+        session.commit()
+    print("✅ Analysis saved to database")
+except Exception as e:
+    print(f"⚠️  Failed to save to database: {e}")
+{% endif %}
+```
+
+# Output Summary
+```
+╔══════════════════════════════════════════════════════════╗
+║              Analysis Complete                           ║
+╠══════════════════════════════════════════════════════════╣
+║ Analysis ID: {analysis_id}                              ║
+║ Files Analyzed: {total_files}                           ║
+║ Components Found: {total_components}                     ║
+║ Patterns Detected: {total_patterns}                      ║
+║ Duplicates Found: {total_duplicates}                     ║
+║ Consolidation Opportunities: {opportunities}             ║
+╚══════════════════════════════════════════════════════════╝
+
+Next Steps:
+1. Review: {output_file}
+2. Plan transformation: /ark-transform --analysis-id {analysis_id}
+3. Generate consolidated code: /ark-generate --plan-id {plan_id}
+```

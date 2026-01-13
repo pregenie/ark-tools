@@ -1,0 +1,516 @@
+{
+  "version": "1.0.0",
+  "description": "ARK-TOOLS MCP Hooks Configuration for Production Quality Enforcement",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "name": "python_code_formatting",
+        "description": "Format Python code with Black and isort after any file write",
+        "matcher": "Write",
+        "file_pattern": "**/*.py",
+        "conditions": {
+          "file_exists": true,
+          "file_size_mb": "<10"
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "black {file} --line-length 120 --target-version py311",
+            "timeout": 30,
+            "continue_on_error": false
+          },
+          {
+            "type": "command", 
+            "command": "isort {file} --profile black --line-length 120",
+            "timeout": 30,
+            "continue_on_error": false
+          }
+        ]
+      },
+      {
+        "name": "python_type_checking",
+        "description": "Run mypy type checking on Python files",
+        "matcher": "Write",
+        "file_pattern": "ark-tools/**/*.py",
+        "conditions": {
+          "file_exists": true,
+          "environment": "development"
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mypy {file} --ignore-missing-imports --python-version 3.11 --warn-return-any --disallow-untyped-defs",
+            "timeout": 60,
+            "continue_on_error": true,
+            "success_message": "✅ Type checking passed: {file}",
+            "error_message": "⚠️ Type checking issues found in {file}"
+          }
+        ]
+      },
+      {
+        "name": "typescript_formatting",
+        "description": "Format TypeScript/JavaScript files with Prettier",
+        "matcher": "Write",
+        "file_pattern": "**/*.{ts,tsx,js,jsx}",
+        "conditions": {
+          "file_exists": true
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prettier --write {file} --tab-width 2 --semi --single-quote",
+            "timeout": 30,
+            "continue_on_error": false
+          },
+          {
+            "type": "command",
+            "command": "eslint --fix {file}",
+            "timeout": 30,
+            "continue_on_error": true
+          }
+        ]
+      },
+      {
+        "name": "docker_validation",
+        "description": "Validate Docker compose files",
+        "matcher": "Write",
+        "file_pattern": "**/docker-compose*.yml",
+        "conditions": {
+          "file_exists": true
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "docker-compose -f {file} config --quiet",
+            "timeout": 60,
+            "continue_on_error": false,
+            "success_message": "✅ Docker compose file valid: {file}",
+            "error_message": "❌ Docker compose file invalid: {file}"
+          }
+        ]
+      },
+      {
+        "name": "yaml_validation",
+        "description": "Validate YAML files for syntax and style",
+        "matcher": "Write", 
+        "file_pattern": "**/*.{yml,yaml}",
+        "conditions": {
+          "file_exists": true
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "yamllint {file} --format parsable",
+            "timeout": 30,
+            "continue_on_error": true
+          }
+        ]
+      },
+      {
+        "name": "json_validation",
+        "description": "Validate JSON files for syntax",
+        "matcher": "Write",
+        "file_pattern": "**/*.json",
+        "conditions": {
+          "file_exists": true
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -m json.tool {file}",
+            "timeout": 15,
+            "continue_on_error": false,
+            "success_message": "✅ JSON valid: {file}",
+            "error_message": "❌ JSON invalid: {file}"
+          }
+        ]
+      },
+      {
+        "name": "ark_source_protection",
+        "description": "Prevent modification of source files (Read-Only Source rule)",
+        "matcher": "Write",
+        "file_pattern": "**/src/**/*.py",
+        "conditions": {
+          "file_exists": true,
+          "not_in_output_dir": true
+        },
+        "hooks": [
+          {
+            "type": "validation",
+            "validation": "prevent_source_modification",
+            "message": "❌ CRITICAL: Attempted to modify source file. Use .ark_output/ directory for generated code.",
+            "block_operation": true,
+            "log_level": "ERROR"
+          }
+        ]
+      },
+      {
+        "name": "mams_integration_check",
+        "description": "Verify MAMS components are accessible after file changes",
+        "matcher": "Write",
+        "file_pattern": "ark-tools/core/**/*.py",
+        "conditions": {
+          "file_exists": true
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import sys; sys.path.insert(0, '/app/ark-tools/arkyvus/migrations'); from extractors.component_extractor import ComponentExtractor; print('MAMS integration OK')\"",
+            "timeout": 30,
+            "continue_on_error": true,
+            "success_message": "✅ MAMS integration verified",
+            "error_message": "⚠️ MAMS integration issue detected"
+          }
+        ]
+      },
+      {
+        "name": "test_file_generation",
+        "description": "Generate test files for new service modules",
+        "matcher": "Write",
+        "file_pattern": "ark-tools/core/*_service.py",
+        "conditions": {
+          "file_exists": true,
+          "test_file_missing": true
+        },
+        "hooks": [
+          {
+            "type": "custom",
+            "handler": "generate_test_file",
+            "config": {
+              "test_directory": "ark-tools/tests/unit",
+              "template": "service_test_template.py"
+            }
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "name": "backup_before_write",
+        "description": "Create backup before modifying important files",
+        "matcher": "Write",
+        "file_pattern": "{ark-tools/database/models/**/*.py,ark-tools/web/app.py,docker-compose*.yml}",
+        "conditions": {
+          "file_exists": true,
+          "file_size_mb": ">0.1"
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p .ark_backups/$(date +%Y%m%d) && cp {file} .ark_backups/$(date +%Y%m%d)/$(basename {file}).$(date +%H%M%S).bak",
+            "timeout": 15,
+            "continue_on_error": true,
+            "success_message": "📦 Backup created for {file}",
+            "error_message": "⚠️ Backup failed for {file}"
+          }
+        ]
+      },
+      {
+        "name": "environment_check",
+        "description": "Verify environment prerequisites before major operations",
+        "matcher": "Bash",
+        "command_pattern": "{docker-compose,./ark*}",
+        "hooks": [
+          {
+            "type": "validation",
+            "validation": "check_environment",
+            "requirements": [
+              "docker",
+              "docker-compose",
+              "python3"
+            ]
+          }
+        ]
+      }
+    ],
+    "PreCommit": [
+      {
+        "name": "comprehensive_testing",
+        "description": "Run tests before any commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -m pytest ark-tools/tests/unit/ -x --tb=short",
+            "timeout": 300,
+            "continue_on_error": false,
+            "success_message": "✅ All unit tests passed",
+            "error_message": "❌ Unit tests failed - commit blocked"
+          }
+        ]
+      },
+      {
+        "name": "syntax_validation",
+        "description": "Validate Python syntax before commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "find ark-tools -name '*.py' -exec python3 -m py_compile {} \\;",
+            "timeout": 120,
+            "continue_on_error": false,
+            "success_message": "✅ Python syntax validation passed",
+            "error_message": "❌ Python syntax errors found - commit blocked"
+          }
+        ]
+      },
+      {
+        "name": "security_scan",
+        "description": "Run security scan before commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bandit -r ark-tools/ -ll -f json -o bandit-report.json || true",
+            "timeout": 180,
+            "continue_on_error": true
+          },
+          {
+            "type": "command",
+            "command": "safety check --json --output safety-report.json || true",
+            "timeout": 120,
+            "continue_on_error": true
+          }
+        ]
+      },
+      {
+        "name": "docker_build_test",
+        "description": "Verify Docker images can be built",
+        "conditions": {
+          "files_changed": ["Dockerfile*", "docker-compose*.yml", "requirements.txt"]
+        },
+        "hooks": [
+          {
+            "type": "command",
+            "command": "docker-compose build --quiet api",
+            "timeout": 600,
+            "continue_on_error": false,
+            "success_message": "✅ Docker build successful",
+            "error_message": "❌ Docker build failed - commit blocked"
+          }
+        ]
+      }
+    ],
+    "PostCommit": [
+      {
+        "name": "update_documentation",
+        "description": "Update documentation after successful commit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/update_docs.py --auto-generate",
+            "timeout": 60,
+            "continue_on_error": true,
+            "success_message": "📚 Documentation updated",
+            "error_message": "⚠️ Documentation update failed"
+          }
+        ]
+      },
+      {
+        "name": "trigger_ci",
+        "description": "Trigger CI pipeline after commit",
+        "conditions": {
+          "branch": "main",
+          "environment": "production"
+        },
+        "hooks": [
+          {
+            "type": "webhook",
+            "url": "${CI_WEBHOOK_URL}",
+            "method": "POST",
+            "payload": {
+              "ref": "${GIT_BRANCH}",
+              "commit": "${GIT_COMMIT}",
+              "trigger": "post_commit_hook"
+            },
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "OnError": [
+      {
+        "name": "error_reporting",
+        "description": "Report errors to monitoring system",
+        "hooks": [
+          {
+            "type": "webhook",
+            "url": "${ERROR_WEBHOOK_URL}",
+            "method": "POST",
+            "payload": {
+              "timestamp": "${TIMESTAMP}",
+              "error": "${ERROR_MESSAGE}",
+              "file": "${FILE_PATH}",
+              "command": "${COMMAND}",
+              "user": "${USER}",
+              "session": "${SESSION_ID}"
+            },
+            "timeout": 15,
+            "continue_on_error": true
+          }
+        ]
+      },
+      {
+        "name": "error_recovery",
+        "description": "Attempt automatic error recovery",
+        "hooks": [
+          {
+            "type": "custom",
+            "handler": "auto_recovery",
+            "config": {
+              "strategies": [
+                "restore_from_backup",
+                "rollback_changes",
+                "retry_with_defaults"
+              ],
+              "max_attempts": 3
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "custom_validations": {
+    "prevent_source_modification": {
+      "description": "Prevent direct modification of source files",
+      "handler": "validate_no_source_modification",
+      "config": {
+        "protected_patterns": [
+          "**/src/**/*.py",
+          "**/lib/**/*.js",
+          "**/components/**/*.tsx"
+        ],
+        "allowed_patterns": [
+          "**/.ark_output/**/*",
+          "**/tests/**/*",
+          "**/docs/**/*"
+        ]
+      }
+    },
+    "check_environment": {
+      "description": "Verify required environment prerequisites",
+      "handler": "validate_environment",
+      "config": {
+        "required_commands": [
+          "docker",
+          "docker-compose", 
+          "python3",
+          "npm"
+        ],
+        "required_env_vars": [
+          "DATABASE_URL",
+          "SECRET_KEY"
+        ],
+        "optional_commands": [
+          "mypy",
+          "black",
+          "isort",
+          "prettier"
+        ]
+      }
+    }
+  },
+  "custom_handlers": {
+    "generate_test_file": {
+      "description": "Generate test file for new service modules",
+      "script": "scripts/generate_test_file.py",
+      "config": {
+        "template_dir": "templates/tests",
+        "output_dir": "ark-tools/tests/unit",
+        "naming_pattern": "test_{module_name}.py"
+      }
+    },
+    "auto_recovery": {
+      "description": "Automatic error recovery strategies",
+      "script": "scripts/auto_recovery.py",
+      "config": {
+        "backup_dir": ".ark_backups",
+        "log_file": "logs/recovery.log",
+        "max_recovery_attempts": 3
+      }
+    },
+    "validate_no_source_modification": {
+      "description": "Validate Read-Only Source rule compliance",
+      "script": "scripts/validate_source_protection.py",
+      "config": {
+        "strict_mode": true,
+        "log_violations": true,
+        "exception_patterns": []
+      }
+    },
+    "validate_environment": {
+      "description": "Environment prerequisite validation",
+      "script": "scripts/validate_environment.py", 
+      "config": {
+        "fail_fast": false,
+        "report_missing": true
+      }
+    }
+  },
+  "notification_channels": {
+    "slack": {
+      "enabled": true,
+      "webhook_url": "${SLACK_WEBHOOK_URL}",
+      "channels": {
+        "errors": "#ark-tools-errors",
+        "deployments": "#ark-tools-deployments",
+        "general": "#ark-tools-general"
+      }
+    },
+    "email": {
+      "enabled": false,
+      "smtp_server": "${SMTP_SERVER}",
+      "recipients": ["team@example.com"]
+    },
+    "discord": {
+      "enabled": false,
+      "webhook_url": "${DISCORD_WEBHOOK_URL}"
+    }
+  },
+  "performance_monitoring": {
+    "hook_execution_timeout": 300,
+    "max_concurrent_hooks": 5,
+    "performance_threshold_ms": 1000,
+    "log_slow_hooks": true,
+    "metrics_collection": {
+      "enabled": true,
+      "endpoint": "${METRICS_ENDPOINT}",
+      "interval_seconds": 60
+    }
+  },
+  "security": {
+    "command_whitelist": [
+      "black",
+      "isort", 
+      "mypy",
+      "prettier",
+      "eslint",
+      "yamllint",
+      "docker-compose",
+      "python3",
+      "npm",
+      "pytest",
+      "bandit",
+      "safety"
+    ],
+    "blocked_patterns": [
+      "rm -rf",
+      "sudo",
+      "su -",
+      "chmod 777",
+      "wget http://",
+      "curl http://"
+    ],
+    "require_confirmation": [
+      "docker system prune",
+      "npm install -g",
+      "pip install"
+    ]
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "logs/mcp-hooks.log",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "rotation": {
+      "max_size_mb": 100,
+      "backup_count": 5
+    }
+  }
+}

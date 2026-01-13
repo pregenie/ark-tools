@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""
+ARK-TOOLS Setup Entry Point
+===========================
+
+Main executable for ARK-TOOLS setup system with auto-dependency installation.
+"""
+
+import sys
+import os
+import subprocess
+import importlib.util
+
+def check_and_install_dependencies():
+    """Check for required dependencies and install if missing."""
+    required_packages = {
+        'click': 'click',
+        'rich': 'rich',
+        'dotenv': 'python-dotenv',
+        'pydantic': 'pydantic',
+        'fastapi': 'fastapi',
+        'uvicorn': 'uvicorn',
+        'aiofiles': 'aiofiles'
+    }
+    
+    optional_packages = {
+        'textual': 'textual',
+        'asyncpg': 'asyncpg',
+        'redis': 'redis',
+        'psycopg2': 'psycopg2-binary'
+    }
+    
+    missing_required = []
+    missing_optional = []
+    
+    # Check required packages
+    for module_name, package_name in required_packages.items():
+        if importlib.util.find_spec(module_name) is None:
+            missing_required.append(package_name)
+    
+    # Check optional packages
+    for module_name, package_name in optional_packages.items():
+        if importlib.util.find_spec(module_name) is None:
+            missing_optional.append(package_name)
+    
+    # Install missing required packages
+    if missing_required:
+        print("🔧 Installing required dependencies...")
+        try:
+            subprocess.check_call(
+                [sys.executable, '-m', 'pip', 'install', '--quiet'] + missing_required,
+                stdout=subprocess.DEVNULL
+            )
+            print("✅ Required dependencies installed")
+        except subprocess.CalledProcessError:
+            print("❌ Failed to install required dependencies. Please run:")
+            print(f"   pip install {' '.join(missing_required)}")
+            sys.exit(1)
+    
+    # Try to install optional packages (don't fail if they can't be installed)
+    if missing_optional:
+        print("📦 Installing optional dependencies...")
+        for package in missing_optional:
+            try:
+                subprocess.check_call(
+                    [sys.executable, '-m', 'pip', 'install', '--quiet', package],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except subprocess.CalledProcessError:
+                if package == 'textual':
+                    print(f"⚠️  Terminal UI not available (textual not installed)")
+                elif package in ['asyncpg', 'psycopg2-binary']:
+                    print(f"⚠️  PostgreSQL support limited ({package} not installed)")
+                elif package == 'redis':
+                    print(f"⚠️  Redis support limited ({package} not installed)")
+
+# Check and install dependencies before importing
+check_and_install_dependencies()
+
+# Add the src directory to the Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+try:
+    from ark_tools.setup.cli import cli
+except ImportError as e:
+    print(f"❌ Failed to import setup module: {e}")
+    print("   Please ensure ark-tools is properly installed")
+    sys.exit(1)
+
+if __name__ == '__main__':
+    cli()

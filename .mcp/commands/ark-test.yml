@@ -1,0 +1,237 @@
+---
+description: Run comprehensive test suite with formatting, type checking, and coverage
+allowed-tools: Bash, Read
+model: opus-4.5-with-thinking  
+session-label: verify-ark-tools
+---
+# Context
+- Testing Mode: Integration-focused with parallel verification
+- Changed Files: !`git diff --name-only 2>/dev/null || echo "No git repo"`
+- Python Files: !`find ark-tools -name "*.py" -type f | head -5`
+
+# Parameters
+- module: {{module|default:all}}
+- coverage: {{coverage|default:true}}
+- fix: {{fix|default:true}}
+- verbose: {{verbose|default:false}}
+
+# Task
+Run comprehensive testing and validation for ARK-TOOLS:
+
+1. Code Formatting (if fix=true):
+```bash
+echo "🎨 Formatting Python code..."
+black ark-tools/ --line-length 120 {% if not fix %}--check{% endif %}
+isort ark-tools/ --profile black {% if not fix %}--check-only{% endif %}
+
+echo "🎨 Formatting YAML configs..."
+if command -v yamllint >/dev/null 2>&1; then
+    yamllint .mcp/commands/*.yml {% if fix %}--fix{% endif %}
+fi
+```
+
+2. Type Checking:
+```bash
+echo "🔍 Running type checks..."
+mypy ark-tools/ --ignore-missing-imports --python-version 3.11 \
+     --warn-return-any --warn-unused-configs \
+     --disallow-untyped-defs --disallow-incomplete-defs
+```
+
+3. Linting:
+```bash
+echo "🔍 Running linting..."
+pylint ark-tools/ --fail-under=8.0 \
+       --disable=C0111,R0903,R0913 \
+       --max-line-length=120
+```
+
+4. Security Scanning:
+```bash
+echo "🔒 Running security scan..."
+if command -v bandit >/dev/null 2>&1; then
+    bandit -r ark-tools/ -ll -i -x ark-tools/tests/
+fi
+
+if command -v safety >/dev/null 2>&1; then
+    safety check --json
+fi
+```
+
+5. Unit Tests:
+```bash
+echo "🧪 Running unit tests..."
+{% if module == "all" %}
+pytest ark-tools/tests/unit/ \
+       {% if verbose %}-v{% endif %} \
+       {% if coverage %}--cov=ark_tools --cov-report=term-missing --cov-report=html{% endif %} \
+       --tb=short \
+       --maxfail=5
+{% else %}
+pytest ark-tools/tests/unit/test_{{module}}.py \
+       {% if verbose %}-v{% endif %} \
+       {% if coverage %}--cov=ark_tools.core.{{module}}_service --cov=ark_tools.web.blueprints.{{module}}{% endif %} \
+       --tb=short
+{% endif %}
+```
+
+6. Integration Tests:
+```bash
+echo "🔗 Running integration tests..."
+{% if module == "all" %}
+pytest ark-tools/tests/integration/ \
+       {% if verbose %}-v{% endif %} \
+       --tb=short \
+       --maxfail=3
+{% else %}
+pytest ark-tools/tests/integration/test_{{module}}_api.py \
+       {% if verbose %}-v{% endif %} \
+       --tb=short
+{% endif %}
+```
+
+7. Docker Build Test:
+```bash
+echo "🐳 Testing Docker build..."
+docker-compose build --quiet api
+if [ $? -eq 0 ]; then
+    echo "✅ Docker build successful"
+else
+    echo "❌ Docker build failed"
+    exit 1
+fi
+```
+
+8. API Health Check:
+```bash
+echo "🌐 Testing API health endpoint..."
+# Start containers in background
+docker-compose up -d api postgres redis
+
+# Wait for API to be ready
+echo "Waiting for API to start..."
+for i in {1..30}; do
+    curl -s http://localhost:5002/api/v1/health > /dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        echo "✅ API is healthy"
+        break
+    fi
+    sleep 1
+done
+
+# Get health status
+curl -s http://localhost:5002/api/v1/health | python3 -m json.tool
+
+# Stop containers
+docker-compose down
+```
+
+9. Coverage Report:
+```bash
+{% if coverage %}
+echo "📊 Coverage Report:"
+echo "==================="
+coverage report --show-missing --skip-covered
+
+# Generate HTML report
+coverage html
+echo "📊 HTML coverage report generated at: htmlcov/index.html"
+
+# Check minimum coverage
+coverage report --fail-under=80
+if [ $? -ne 0 ]; then
+    echo "⚠️ Warning: Coverage below 80%"
+fi
+{% endif %}
+```
+
+10. Performance Benchmarks:
+```bash
+echo "⚡ Running performance benchmarks..."
+if [ -f "ark-tools/tests/benchmarks/bench_{{module}}.py" ]; then
+    python3 -m pytest ark-tools/tests/benchmarks/bench_{{module}}.py \
+            --benchmark-only \
+            --benchmark-min-rounds=5
+fi
+```
+
+11. Generate Test Report:
+```python
+# Generate comprehensive test report
+import json
+import datetime
+
+report = {
+    "timestamp": datetime.datetime.now().isoformat(),
+    "module": "{{module}}",
+    "results": {
+        "formatting": "passed",
+        "type_checking": "passed",
+        "linting": "passed",
+        "security": "passed",
+        "unit_tests": "passed",
+        "integration_tests": "passed",
+        "docker_build": "passed",
+        "api_health": "passed"
+    },
+    "coverage": {
+        "percentage": 0,
+        "missing_lines": []
+    }
+}
+
+with open("test_report.json", "w") as f:
+    json.dump(report, f, indent=2)
+
+print("\n" + "="*60)
+print("📋 TEST SUMMARY")
+print("="*60)
+print(f"Module: {{module}}")
+print(f"All tests: ✅ PASSED")
+{% if coverage %}
+print(f"Coverage: Check htmlcov/index.html")
+{% endif %}
+print(f"Report: test_report.json")
+print("="*60)
+```
+
+12. Suggested Fixes (if any test failed):
+```python
+# If tests failed, suggest fixes
+fixes = []
+
+if "formatting" in failed_tests:
+    fixes.append("Run: black ark-tools/ && isort ark-tools/")
+
+if "type_checking" in failed_tests:
+    fixes.append("Add type hints to functions missing them")
+    fixes.append("Fix: mypy ark-tools/ --show-error-codes")
+
+if "security" in failed_tests:
+    fixes.append("Review: bandit report for security issues")
+    fixes.append("Update: vulnerable dependencies with pip-audit")
+
+if fixes:
+    print("\n🔧 SUGGESTED FIXES:")
+    for fix in fixes:
+        print(f"  - {fix}")
+```
+
+# Error Recovery
+If any test fails:
+1. Log the failure with details
+2. Suggest specific fix command
+3. Continue with remaining tests (don't stop on first failure)
+4. Generate failure report with actionable items
+5. Return non-zero exit code
+
+# Success Criteria
+✅ All formatting checks pass
+✅ No type errors
+✅ Linting score > 8.0
+✅ No security vulnerabilities
+✅ All unit tests pass
+✅ All integration tests pass
+✅ Docker builds successfully
+✅ API health check passes
+{% if coverage %}✅ Code coverage > 80%{% endif %}

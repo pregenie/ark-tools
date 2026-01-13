@@ -1,0 +1,438 @@
+---
+description: Create transformation plan from analysis results with intelligent grouping
+allowed-tools: Read, Write, Task
+model: opus-4.5-with-thinking
+session-label: main-transform-{analysis_id}
+---
+# Context
+- Analysis ID: {{analysis_id}}
+- Strategy: {{strategy|default:conservative}}
+- Output Directory: {{output_dir|default:.ark_output}}
+- MAMS Components Available: !`ls -la /app/ark-tools/arkyvus/migrations/transformers/`
+
+# Parameters  
+- analysis_id: {{analysis_id}}
+- strategy: {{strategy|default:conservative}}
+- min_group_size: {{min_group_size|default:3}}
+- max_group_size: {{max_group_size|default:15}}
+- similarity_threshold: {{similarity_threshold|default:0.85}}
+- preserve_tests: {{preserve_tests|default:true}}
+
+# Task
+Create intelligent transformation plan from analysis results:
+
+1. Load Analysis Results:
+```python
+import sys
+import json
+import os
+from pathlib import Path
+from datetime import datetime
+from uuid import uuid4
+from collections import defaultdict
+
+# Load MAMS transformation components
+sys.path.insert(0, '/app/ark-tools/arkyvus/migrations')
+from transformers.safe_transformer import SafeTransformer
+from generators.unified_generator_enhanced import EnhancedUnifiedGenerator
+
+# Load analysis results
+analysis_id = "{{analysis_id}}"
+strategy = "{{strategy}}"
+
+print(f"🔧 Creating Transformation Plan")
+print(f"   Analysis ID: {analysis_id}")
+print(f"   Strategy: {strategy}")
+print(f"   Min Group Size: {{min_group_size}}")
+print(f"   Similarity Threshold: {{similarity_threshold}}")
+
+# Try to load from database first, then from file
+analysis_data = None
+try:
+    from database.models.base import DatabaseManager
+    from database.models.analysis import Analysis
+    
+    db = DatabaseManager(os.getenv('DATABASE_URL'))
+    with db.get_session() as session:
+        analysis = session.query(Analysis).filter_by(id=analysis_id).first()
+        if analysis:
+            analysis_data = analysis.results
+            print("✅ Loaded analysis from database")
+except:
+    # Fallback to file
+    analysis_file = f"analysis_results_{analysis_id}.json"
+    if os.path.exists(analysis_file):
+        with open(analysis_file, 'r') as f:
+            analysis_data = json.load(f)
+        print("✅ Loaded analysis from file")
+
+if not analysis_data:
+    print("❌ Analysis results not found")
+    exit(1)
+```
+
+2. Extract Components and Patterns:
+```python
+# Extract patterns and components from analysis
+patterns = analysis_data.get('patterns', {})
+duplicates = analysis_data.get('duplicates', {})
+consolidation_opportunities = analysis_data.get('consolidation_opportunities', [])
+
+print(f"\n📊 Analysis Summary:")
+print(f"   API Endpoints: {patterns.get('api_endpoints', 0)}")
+print(f"   Service Functions: {patterns.get('service_functions', 0)}")
+print(f"   Data Models: {patterns.get('data_models', 0)}")
+print(f"   Utilities: {patterns.get('utilities', 0)}")
+print(f"   Ghost Helpers: {patterns.get('ghost_helpers', 0)}")
+print(f"   Near Duplicates: {duplicates.get('near', 0)}")
+```
+
+3. Group Related Components:
+```python
+# Intelligent grouping based on strategy
+print(f"\n🎯 Grouping Components ({strategy} strategy)")
+print("=" * 60)
+
+transformation_groups = []
+
+# Strategy-specific thresholds
+thresholds = {
+    'conservative': {'similarity': 0.90, 'min_group': {{min_group_size}}, 'max_group': {{max_group_size}}},
+    'moderate': {'similarity': 0.80, 'min_group': 2, 'max_group': 20},
+    'aggressive': {'similarity': 0.70, 'min_group': 2, 'max_group': 25}
+}
+
+config = thresholds[strategy]
+print(f"Using thresholds: {config}")
+
+# Group by domain/functionality
+domain_groups = defaultdict(list)
+
+for opp in consolidation_opportunities:
+    domain = opp.get('domain', 'unknown')
+    components = opp.get('components', 0)
+    files = opp.get('files', [])
+    
+    if components >= config['min_group'] and components <= config['max_group']:
+        group_id = str(uuid4())
+        transformation_groups.append({
+            'id': group_id,
+            'name': f"{domain}_unified",
+            'type': 'consolidation',
+            'domain': domain,
+            'source_files': files,
+            'component_count': components,
+            'strategy': strategy,
+            'operations': [
+                {
+                    'type': 'merge',
+                    'sources': files,
+                    'target': f"unified_{domain}_service.py",
+                    'merge_strategy': strategy
+                }
+            ],
+            'estimated_reduction': f"{(1 - 1/len(files)) * 100:.0f}%" if len(files) > 1 else "0%"
+        })
+
+print(f"✅ Created {len(transformation_groups)} transformation groups")
+```
+
+4. Analyze Duplicate Consolidation:
+```python
+# Handle near duplicates
+print(f"\n🔍 Processing Duplicates")
+print("=" * 40)
+
+duplicate_groups = defaultdict(list)
+top_duplicates = duplicates.get('top_duplicates', [])
+
+for dup in top_duplicates:
+    if dup['similarity'] >= config['similarity']:
+        # Group duplicates by similarity and type
+        key = f"dup_{dup['similarity']:.2f}"
+        duplicate_groups[key].append(dup)
+
+for group_key, dups in duplicate_groups.items():
+    if len(dups) >= 2:  # At least 2 duplicate pairs
+        group_id = str(uuid4())
+        unique_files = set()
+        for dup in dups:
+            unique_files.add(dup['file1'])
+            unique_files.add(dup['file2'])
+        
+        transformation_groups.append({
+            'id': group_id,
+            'name': f"duplicate_elimination_{group_key}",
+            'type': 'deduplication',
+            'domain': 'duplicates',
+            'source_files': list(unique_files),
+            'duplicate_count': len(dups),
+            'operations': [
+                {
+                    'type': 'deduplicate',
+                    'sources': list(unique_files),
+                    'target': f"consolidated_functions.py",
+                    'duplicates': dups
+                }
+            ],
+            'estimated_reduction': f"{len(dups) * 10}%" # Rough estimate
+        })
+
+print(f"✅ Created {len(duplicate_groups)} deduplication groups")
+```
+
+5. Handle Ghost Helpers:
+```python
+# Consolidate standalone helper functions
+print(f"\n👻 Processing Ghost Helpers")
+print("=" * 40)
+
+ghost_count = patterns.get('ghost_helpers', 0)
+if ghost_count > 5:  # Only if significant number
+    group_id = str(uuid4())
+    transformation_groups.append({
+        'id': group_id,
+        'name': 'unified_utilities',
+        'type': 'utility_consolidation',
+        'domain': 'utilities',
+        'source_files': [f"ghost_helper_{i}.py" for i in range(ghost_count)],  # Placeholder
+        'component_count': ghost_count,
+        'operations': [
+            {
+                'type': 'consolidate',
+                'sources': [f"Various utility files"],
+                'target': 'utils/common_utilities.py',
+                'organization': 'by_functionality'
+            }
+        ],
+        'estimated_reduction': f"{(ghost_count - 3) * 5}%"  # Estimate
+    })
+    
+    print(f"✅ Created utility consolidation group for {ghost_count} helpers")
+```
+
+6. Generate Safe Transformation Operations:
+```python
+# Define detailed operations for each group
+print(f"\n🛠️ Defining Transformation Operations")
+print("=" * 60)
+
+for group in transformation_groups:
+    # Add safety checks and rollback points
+    group['safety_checks'] = {
+        'syntax_validation': True,
+        'import_resolution': True,
+        'test_preservation': {{preserve_tests}},
+        'rollback_point': True
+    }
+    
+    # Add estimated metrics
+    group['metrics'] = {
+        'files_before': len(group['source_files']),
+        'files_after': len(group['operations']),
+        'complexity_impact': 'neutral',  # Will be calculated
+        'risk_level': strategy  # conservative = low, aggressive = high
+    }
+    
+    # Add validation steps
+    group['validation'] = [
+        'Check syntax after merge',
+        'Verify imports resolve',
+        'Run existing tests',
+        'Check for circular dependencies'
+    ]
+
+print(f"✅ Added safety checks to all {len(transformation_groups)} groups")
+```
+
+7. Risk Assessment:
+```python
+# Assess transformation risks
+print(f"\n⚠️ Risk Assessment")
+print("=" * 40)
+
+risk_levels = {'low': 0, 'medium': 0, 'high': 0}
+
+for group in transformation_groups:
+    file_count = len(group['source_files'])
+    
+    # Risk factors
+    if file_count > 10:
+        risk = 'high'
+    elif file_count > 5:
+        risk = 'medium'
+    else:
+        risk = 'low'
+    
+    # Adjust for strategy
+    if strategy == 'aggressive':
+        risk = 'high' if risk != 'low' else 'medium'
+    elif strategy == 'conservative' and risk == 'high':
+        risk = 'medium'
+    
+    group['risk_level'] = risk
+    risk_levels[risk] += 1
+
+print(f"Risk Distribution:")
+for level, count in risk_levels.items():
+    print(f"   {level.capitalize()}: {count} groups")
+```
+
+8. Generate Transformation Plan:
+```python
+# Create comprehensive transformation plan
+plan_id = str(uuid4())
+transformation_plan = {
+    'plan_id': plan_id,
+    'analysis_id': analysis_id,
+    'created_at': datetime.now().isoformat(),
+    'strategy': strategy,
+    'configuration': {
+        'similarity_threshold': config['similarity'],
+        'min_group_size': config['min_group'],
+        'max_group_size': config['max_group'],
+        'preserve_tests': {{preserve_tests}}
+    },
+    'summary': {
+        'total_groups': len(transformation_groups),
+        'total_files_affected': sum(len(g['source_files']) for g in transformation_groups),
+        'estimated_reduction': sum(int(g['estimated_reduction'].rstrip('%')) for g in transformation_groups if g['estimated_reduction'] != '0%'),
+        'risk_distribution': risk_levels
+    },
+    'groups': transformation_groups,
+    'execution_order': [
+        'utilities_consolidation',  # Safest first
+        'deduplication',
+        'consolidation'
+    ],
+    'rollback_strategy': {
+        'checkpoint_frequency': 'per_group',
+        'backup_location': '{{output_dir}}/backups/',
+        'recovery_script': 'restore_checkpoint.py'
+    }
+}
+
+print(f"\n📋 Transformation Plan Summary:")
+print(f"   Plan ID: {plan_id}")
+print(f"   Groups: {transformation_plan['summary']['total_groups']}")
+print(f"   Files Affected: {transformation_plan['summary']['total_files_affected']}")
+print(f"   Est. Reduction: {transformation_plan['summary']['estimated_reduction']}%")
+```
+
+9. Generate Preview Report:
+```python
+# Create human-readable preview
+print(f"\n📄 Generating Preview Report")
+print("=" * 40)
+
+preview_report = f"""
+# ARK-TOOLS Transformation Plan Preview
+
+**Plan ID**: {plan_id}
+**Analysis ID**: {analysis_id}
+**Strategy**: {strategy}
+**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## Summary
+
+- **Total Groups**: {len(transformation_groups)}
+- **Files Affected**: {sum(len(g['source_files']) for g in transformation_groups)}
+- **Estimated Code Reduction**: {sum(int(g['estimated_reduction'].rstrip('%')) for g in transformation_groups if g['estimated_reduction'] != '0%')}%
+
+## Risk Assessment
+
+"""
+
+for level, count in risk_levels.items():
+    preview_report += f"- **{level.capitalize()} Risk**: {count} groups\n"
+
+preview_report += "\n## Transformation Groups\n\n"
+
+for i, group in enumerate(transformation_groups, 1):
+    preview_report += f"### {i}. {group['name']}\n"
+    preview_report += f"- **Type**: {group['type']}\n"
+    preview_report += f"- **Files**: {len(group['source_files'])}\n"
+    preview_report += f"- **Risk**: {group['risk_level']}\n"
+    preview_report += f"- **Reduction**: {group['estimated_reduction']}\n\n"
+
+# Save preview report
+with open(f"transformation_preview_{plan_id}.md", 'w') as f:
+    f.write(preview_report)
+
+print(f"✅ Preview report saved: transformation_preview_{plan_id}.md")
+```
+
+10. Save Transformation Plan:
+```python
+# Save plan to database and file
+plan_file = f"transformation_plan_{plan_id}.json"
+
+with open(plan_file, 'w') as f:
+    json.dump(transformation_plan, f, indent=2)
+
+print(f"✅ Plan saved to: {plan_file}")
+
+# Save to database if available
+try:
+    from database.models.transformation import TransformationPlan
+    
+    db = DatabaseManager(os.getenv('DATABASE_URL'))
+    with db.get_session() as session:
+        plan_record = TransformationPlan(
+            id=plan_id,
+            analysis_id=analysis_id,
+            strategy=strategy,
+            status='draft',
+            plan_data=transformation_plan
+        )
+        session.add(plan_record)
+        session.commit()
+    print("✅ Plan saved to database")
+except Exception as e:
+    print(f"⚠️  Database save failed: {e}")
+```
+
+11. Generate Next Steps:
+```python
+# Provide actionable next steps
+print(f"""
+╔══════════════════════════════════════════════════════════════╗
+║              Transformation Plan Created                     ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Plan ID: {plan_id}                                         ║
+║  Groups: {len(transformation_groups)}                                                         ║
+║  Strategy: {strategy}                                          ║
+║  Risk Level: {max(risk_levels.keys(), key=risk_levels.get)}                                                     ║
+║                                                              ║
+║  Next Steps:                                                ║
+║  1. Review: transformation_preview_{plan_id}.md            ║
+║  2. Approve: /ark-approve --plan-id {plan_id}              ║
+║  3. Generate: /ark-generate --plan-id {plan_id}            ║
+║                                                              ║
+║  Or modify groups individually:                             ║
+║  /ark-modify-group --plan-id {plan_id} --group-id <id>     ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+""")
+
+# Return plan ID for chaining commands
+print(f"PLAN_ID={plan_id}")
+```
+
+# Error Handling
+If transformation planning fails:
+1. Validate analysis_id exists
+2. Check strategy is valid (conservative/moderate/aggressive)
+3. Ensure MAMS components are available
+4. Provide fallback grouping strategies
+5. Save partial plans for recovery
+
+# Success Criteria
+✅ Analysis data loaded successfully
+✅ Components grouped intelligently
+✅ Risk assessment completed
+✅ Safety checks defined
+✅ Preview report generated
+✅ Plan saved to database and file
+✅ Next steps provided

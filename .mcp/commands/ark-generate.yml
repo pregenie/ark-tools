@@ -1,0 +1,612 @@
+---
+description: Generate consolidated code from approved transformation plan with versioning and safety
+allowed-tools: Read, Write, Bash, Task
+model: opus-4.5-with-thinking
+session-label: main-generate-{plan_id}
+---
+# Context
+- Plan ID: {{plan_id}}
+- Output Directory: {{output_dir|default:.ark_output}}
+- Dry Run: {{dry_run|default:true}}
+- MAMS Generator: /app/ark-tools/arkyvus/migrations/generators/
+
+# Parameters
+- plan_id: {{plan_id}}
+- dry_run: {{dry_run|default:true}}
+- backup_original: {{backup_original|default:true}}
+- validate_syntax: {{validate_syntax|default:true}}
+- run_tests: {{run_tests|default:false}}
+- output_format: {{output_format|default:structured}}
+
+# Task
+Generate consolidated code safely from transformation plan:
+
+1. Initialize Generation Environment:
+```python
+import sys
+import json
+import os
+import shutil
+from pathlib import Path
+from datetime import datetime
+from uuid import uuid4
+import subprocess
+import tempfile
+
+# Add MAMS to path
+sys.path.insert(0, '/app/ark-tools/arkyvus/migrations')
+from generators.unified_generator_enhanced import EnhancedUnifiedGenerator
+from transformers.safe_transformer import SafeTransformer
+
+# Initialize
+plan_id = "{{plan_id}}"
+dry_run = {{dry_run}}
+output_dir = Path("{{output_dir}}")
+generation_id = str(uuid4())
+
+print(f"🚀 Starting Code Generation")
+print(f"   Plan ID: {plan_id}")
+print(f"   Generation ID: {generation_id}")
+print(f"   Dry Run: {dry_run}")
+print(f"   Output Directory: {output_dir}")
+
+# Create versioned output directory
+timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+versioned_output = output_dir / f"v_{timestamp}"
+if not dry_run:
+    versioned_output.mkdir(parents=True, exist_ok=True)
+    print(f"✅ Created output directory: {versioned_output}")
+```
+
+2. Load Transformation Plan:
+```python
+# Load transformation plan
+transformation_plan = None
+
+try:
+    # Try database first
+    from database.models.base import DatabaseManager
+    from database.models.transformation import TransformationPlan
+    
+    db = DatabaseManager(os.getenv('DATABASE_URL'))
+    with db.get_session() as session:
+        plan_record = session.query(TransformationPlan).filter_by(id=plan_id).first()
+        if plan_record:
+            transformation_plan = plan_record.plan_data
+            print("✅ Loaded plan from database")
+except:
+    # Fallback to file
+    plan_file = f"transformation_plan_{plan_id}.json"
+    if os.path.exists(plan_file):
+        with open(plan_file, 'r') as f:
+            transformation_plan = json.load(f)
+        print("✅ Loaded plan from file")
+
+if not transformation_plan:
+    print("❌ Transformation plan not found")
+    exit(1)
+
+groups = transformation_plan['groups']
+strategy = transformation_plan['strategy']
+
+print(f"📋 Plan Summary:")
+print(f"   Strategy: {strategy}")
+print(f"   Groups: {len(groups)}")
+print(f"   Files to process: {transformation_plan['summary']['total_files_affected']}")
+```
+
+3. Create Backup (if not dry run):
+```python
+{% if backup_original %}
+# Create backup of original files
+if not dry_run:
+    print(f"\n💾 Creating backup...")
+    backup_dir = versioned_output / "backup_original"
+    backup_dir.mkdir(exist_ok=True)
+    
+    all_source_files = set()
+    for group in groups:
+        for file_path in group['source_files']:
+            all_source_files.add(file_path)
+    
+    for source_file in all_source_files:
+        if os.path.exists(source_file):
+            rel_path = os.path.relpath(source_file)
+            backup_path = backup_dir / rel_path
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, backup_path)
+    
+    print(f"✅ Backed up {len(all_source_files)} files to {backup_dir}")
+{% endif %}
+```
+
+4. Process Groups in Order:
+```python
+# Process transformation groups
+print(f"\n🔧 Processing Transformation Groups")
+print("=" * 60)
+
+execution_order = transformation_plan.get('execution_order', ['consolidation', 'deduplication', 'utilities'])
+processed_groups = []
+generation_errors = []
+
+# Sort groups by execution order and risk level
+def sort_key(group):
+    type_priority = {
+        'utility_consolidation': 0,  # Safest first
+        'deduplication': 1,
+        'consolidation': 2
+    }
+    risk_priority = {'low': 0, 'medium': 1, 'high': 2}
+    
+    return (
+        type_priority.get(group['type'], 3),
+        risk_priority.get(group.get('risk_level', 'medium'), 1)
+    )
+
+sorted_groups = sorted(groups, key=sort_key)
+
+for i, group in enumerate(sorted_groups, 1):
+    group_id = group['id']
+    group_name = group['name']
+    group_type = group['type']
+    
+    print(f"\n[{i}/{len(groups)}] Processing: {group_name}")
+    print(f"   Type: {group_type}")
+    print(f"   Risk: {group.get('risk_level', 'medium')}")
+    print(f"   Files: {len(group['source_files'])}")
+    
+    try:
+        # Create checkpoint before processing
+        checkpoint_file = f"checkpoint_{group_id}.json" if not dry_run else None
+        
+        if not dry_run and checkpoint_file:
+            checkpoint_data = {
+                'group_id': group_id,
+                'timestamp': datetime.now().isoformat(),
+                'processed_groups': [g['id'] for g in processed_groups]
+            }
+            with open(versioned_output / checkpoint_file, 'w') as f:
+                json.dump(checkpoint_data, f, indent=2)
+        
+        # Process based on group type
+        if group_type == 'consolidation':
+            result = process_consolidation_group(group, versioned_output, dry_run)
+        elif group_type == 'deduplication':
+            result = process_deduplication_group(group, versioned_output, dry_run)
+        elif group_type == 'utility_consolidation':
+            result = process_utility_group(group, versioned_output, dry_run)
+        else:
+            result = {'status': 'skipped', 'reason': 'unknown_type'}
+        
+        processed_groups.append({
+            'group_id': group_id,
+            'name': group_name,
+            'status': result['status'],
+            'output_files': result.get('output_files', []),
+            'warnings': result.get('warnings', [])
+        })
+        
+        print(f"   ✅ {result['status'].upper()}")
+        
+    except Exception as e:
+        error_info = {
+            'group_id': group_id,
+            'name': group_name,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }
+        generation_errors.append(error_info)
+        print(f"   ❌ ERROR: {e}")
+```
+
+5. Consolidation Processing Function:
+```python
+def process_consolidation_group(group, output_dir, dry_run):
+    """Process consolidation group using MAMS"""
+    group_output = output_dir / group['domain'] if not dry_run else Path("/tmp/dry_run")
+    
+    if not dry_run:
+        group_output.mkdir(exist_ok=True)
+    
+    # Use MAMS Enhanced Generator
+    generator = EnhancedUnifiedGenerator(dry_run=dry_run)
+    
+    # Collect components from source files
+    all_components = []
+    for source_file in group['source_files']:
+        if os.path.exists(source_file):
+            # Extract components using MAMS
+            from extractors.component_extractor import ComponentExtractor
+            extractor = ComponentExtractor()
+            
+            try:
+                components = extractor.extract(source_file)
+                for component in components:
+                    component['source_file'] = source_file
+                    all_components.append(component)
+            except Exception as e:
+                print(f"     Warning: Failed to extract from {source_file}: {e}")
+    
+    # Group components by type
+    functions = [c for c in all_components if c.get('type') == 'function']
+    classes = [c for c in all_components if c.get('type') == 'class']
+    imports = [c for c in all_components if c.get('type') == 'import']
+    
+    # Generate unified service
+    target_file = group_output / f"unified_{group['domain']}_service.py" if not dry_run else "unified_service.py"
+    
+    if not dry_run:
+        unified_code = generate_unified_service(functions, classes, imports, group['domain'])
+        
+        with open(target_file, 'w') as f:
+            f.write(unified_code)
+        
+        # Validate syntax
+        if {{validate_syntax}}:
+            try:
+                with open(target_file, 'r') as f:
+                    compile(f.read(), target_file, 'exec')
+                print(f"     ✅ Syntax validation passed")
+            except SyntaxError as e:
+                print(f"     ⚠️ Syntax error: {e}")
+                return {'status': 'failed', 'reason': 'syntax_error', 'error': str(e)}
+    
+    return {
+        'status': 'completed',
+        'output_files': [str(target_file)] if not dry_run else [f"Would create: {target_file}"],
+        'components_merged': len(all_components)
+    }
+
+def generate_unified_service(functions, classes, imports, domain):
+    """Generate unified service code"""
+    code_parts = []
+    
+    # Header
+    code_parts.append(f'"""Unified {domain} service generated by ARK-TOOLS"""')
+    code_parts.append("")
+    
+    # Imports (deduplicated)
+    unique_imports = set()
+    for imp in imports:
+        import_stmt = imp.get('code', '').strip()
+        if import_stmt:
+            unique_imports.add(import_stmt)
+    
+    for imp in sorted(unique_imports):
+        code_parts.append(imp)
+    
+    if unique_imports:
+        code_parts.append("")
+    
+    # Classes
+    for cls in classes:
+        code_parts.append(cls.get('code', ''))
+        code_parts.append("")
+    
+    # Functions
+    for func in functions:
+        code_parts.append(func.get('code', ''))
+        code_parts.append("")
+    
+    return '\n'.join(code_parts)
+```
+
+6. Deduplication Processing Function:
+```python
+def process_deduplication_group(group, output_dir, dry_run):
+    """Process deduplication group"""
+    duplicates = group['operations'][0].get('duplicates', [])
+    
+    # Analyze duplicates and choose best implementation
+    deduplicated_functions = {}
+    
+    for dup in duplicates:
+        func1_key = f"{dup['file1']}::{dup['name1']}"
+        func2_key = f"{dup['file2']}::{dup['name2']}"
+        
+        # Simple heuristic: choose the one with more docstring/comments
+        func1_code = get_function_code(dup['file1'], dup['name1'])
+        func2_code = get_function_code(dup['file2'], dup['name2'])
+        
+        if func1_code and func2_code:
+            # Count docstring/comment lines
+            func1_doc_lines = len([l for l in func1_code.split('\n') if '"""' in l or '#' in l])
+            func2_doc_lines = len([l for l in func2_code.split('\n') if '"""' in l or '#' in l])
+            
+            chosen_key = func1_key if func1_doc_lines >= func2_doc_lines else func2_key
+            chosen_code = func1_code if func1_doc_lines >= func2_doc_lines else func2_code
+            
+            deduplicated_functions[dup['name1']] = {
+                'code': chosen_code,
+                'chosen_from': chosen_key,
+                'duplicates': [func1_key, func2_key]
+            }
+    
+    # Generate consolidated file
+    output_file = output_dir / "deduplicated_functions.py" if not dry_run else "deduplicated_functions.py"
+    
+    if not dry_run and deduplicated_functions:
+        with open(output_file, 'w') as f:
+            f.write('"""Deduplicated functions generated by ARK-TOOLS"""\n\n')
+            
+            for func_name, func_info in deduplicated_functions.items():
+                f.write(f"# Consolidated from: {func_info['duplicates']}\n")
+                f.write(func_info['code'])
+                f.write('\n\n')
+    
+    return {
+        'status': 'completed',
+        'output_files': [str(output_file)] if not dry_run else [f"Would create: {output_file}"],
+        'duplicates_removed': len(deduplicated_functions)
+    }
+
+def get_function_code(file_path, function_name):
+    """Extract function code from file"""
+    try:
+        with open(file_path, 'r') as f:
+            content = f.read()
+        
+        # Simple extraction - would use AST in production
+        lines = content.split('\n')
+        in_function = False
+        function_lines = []
+        
+        for line in lines:
+            if f"def {function_name}" in line:
+                in_function = True
+                function_lines = [line]
+            elif in_function:
+                if line.startswith('def ') and not line.startswith('    '):
+                    break
+                function_lines.append(line)
+        
+        return '\n'.join(function_lines)
+    except:
+        return None
+```
+
+7. Utility Processing Function:
+```python
+def process_utility_group(group, output_dir, dry_run):
+    """Process utility consolidation group"""
+    utils_dir = output_dir / "utils" if not dry_run else Path("/tmp/utils")
+    
+    if not dry_run:
+        utils_dir.mkdir(exist_ok=True)
+    
+    # Collect all utility functions
+    utility_functions = []
+    
+    for source_file in group['source_files']:
+        if os.path.exists(source_file):
+            try:
+                # Extract utility functions
+                from extractors.component_extractor import ComponentExtractor
+                extractor = ComponentExtractor()
+                components = extractor.extract(source_file)
+                
+                for component in components:
+                    if component.get('type') == 'function':
+                        utility_functions.append(component)
+            except Exception as e:
+                print(f"     Warning: Failed to process {source_file}: {e}")
+    
+    # Organize by functionality
+    categories = {
+        'string_utils': [],
+        'data_utils': [],
+        'validation_utils': [],
+        'formatting_utils': [],
+        'general_utils': []
+    }
+    
+    for func in utility_functions:
+        name = func.get('name', '').lower()
+        
+        if any(kw in name for kw in ['string', 'str', 'text']):
+            categories['string_utils'].append(func)
+        elif any(kw in name for kw in ['data', 'json', 'dict', 'list']):
+            categories['data_utils'].append(func)
+        elif any(kw in name for kw in ['valid', 'check', 'verify']):
+            categories['validation_utils'].append(func)
+        elif any(kw in name for kw in ['format', 'pretty', 'display']):
+            categories['formatting_utils'].append(func)
+        else:
+            categories['general_utils'].append(func)
+    
+    # Generate utility files
+    output_files = []
+    
+    for category, functions in categories.items():
+        if functions:
+            output_file = utils_dir / f"{category}.py"
+            
+            if not dry_run:
+                with open(output_file, 'w') as f:
+                    f.write(f'"""ARK-TOOLS generated {category.replace("_", " ")}"""\n\n')
+                    
+                    for func in functions:
+                        f.write(func.get('code', ''))
+                        f.write('\n\n')
+                
+                output_files.append(str(output_file))
+            else:
+                output_files.append(f"Would create: {output_file}")
+    
+    return {
+        'status': 'completed',
+        'output_files': output_files,
+        'categories_created': len([c for c, f in categories.items() if f])
+    }
+```
+
+8. Validation and Testing:
+```python
+# Run validation on generated code
+if not dry_run and {{validate_syntax}}:
+    print(f"\n🔍 Validating Generated Code")
+    print("=" * 40)
+    
+    validation_results = []
+    
+    for result in processed_groups:
+        for output_file in result.get('output_files', []):
+            if os.path.exists(output_file) and output_file.endswith('.py'):
+                try:
+                    # Syntax check
+                    with open(output_file, 'r') as f:
+                        compile(f.read(), output_file, 'exec')
+                    
+                    # Import check
+                    subprocess.run(['python', '-m', 'py_compile', output_file], 
+                                 check=True, capture_output=True)
+                    
+                    validation_results.append({
+                        'file': output_file,
+                        'syntax': 'valid',
+                        'imports': 'valid'
+                    })
+                    print(f"   ✅ {os.path.basename(output_file)}")
+                    
+                except subprocess.CalledProcessError as e:
+                    validation_results.append({
+                        'file': output_file,
+                        'syntax': 'invalid',
+                        'error': e.stderr.decode() if e.stderr else str(e)
+                    })
+                    print(f"   ❌ {os.path.basename(output_file)}: {e}")
+                except Exception as e:
+                    validation_results.append({
+                        'file': output_file,
+                        'syntax': 'error',
+                        'error': str(e)
+                    })
+                    print(f"   ⚠️ {os.path.basename(output_file)}: {e}")
+
+{% if run_tests %}
+# Run tests if requested
+if not dry_run and {{run_tests}}:
+    print(f"\n🧪 Running Tests")
+    print("=" * 30)
+    
+    test_results = []
+    
+    # Look for test files in original structure
+    for result in processed_groups:
+        for source_file in result.get('source_files', []):
+            # Find corresponding test file
+            test_file = source_file.replace('.py', '_test.py')
+            if not os.path.exists(test_file):
+                test_file = source_file.replace('src/', 'test/test_')
+            
+            if os.path.exists(test_file):
+                try:
+                    result = subprocess.run(['python', '-m', 'pytest', test_file, '-v'], 
+                                          capture_output=True, text=True, timeout=60)
+                    test_results.append({
+                        'test_file': test_file,
+                        'passed': result.returncode == 0,
+                        'output': result.stdout
+                    })
+                    status = "✅ PASSED" if result.returncode == 0 else "❌ FAILED"
+                    print(f"   {status}: {os.path.basename(test_file)}")
+                except subprocess.TimeoutExpired:
+                    print(f"   ⏰ TIMEOUT: {os.path.basename(test_file)}")
+                except Exception as e:
+                    print(f"   ⚠️ ERROR: {os.path.basename(test_file)}: {e}")
+{% endif %}
+```
+
+9. Generate Summary Report:
+```python
+# Generate comprehensive generation report
+generation_report = {
+    'generation_id': generation_id,
+    'plan_id': plan_id,
+    'timestamp': datetime.now().isoformat(),
+    'dry_run': dry_run,
+    'configuration': {
+        'strategy': strategy,
+        'backup_original': {{backup_original}},
+        'validate_syntax': {{validate_syntax}},
+        'run_tests': {{run_tests}}
+    },
+    'summary': {
+        'groups_processed': len(processed_groups),
+        'groups_failed': len(generation_errors),
+        'files_generated': sum(len(g.get('output_files', [])) for g in processed_groups),
+        'output_directory': str(versioned_output) if not dry_run else "dry_run"
+    },
+    'processed_groups': processed_groups,
+    'errors': generation_errors,
+    'validation_results': validation_results if not dry_run and {{validate_syntax}} else [],
+    {% if run_tests %}'test_results': test_results if not dry_run and {{run_tests}} else []{% endif %}
+}
+
+# Save report
+report_file = versioned_output / f"generation_report_{generation_id}.json" if not dry_run else f"generation_report_{generation_id}.json"
+
+if not dry_run:
+    with open(report_file, 'w') as f:
+        json.dump(generation_report, f, indent=2)
+else:
+    print("DRY RUN: Report would be saved to:", report_file)
+
+print(f"\n📄 Generation report: {report_file}")
+```
+
+10. Final Summary:
+```python
+# Display final summary
+success_count = len([g for g in processed_groups if g['status'] == 'completed'])
+total_files = sum(len(g.get('output_files', [])) for g in processed_groups)
+
+print(f"""
+╔══════════════════════════════════════════════════════════════╗
+║                 Code Generation Complete                     ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Generation ID: {generation_id}                              ║
+║  Plan ID: {plan_id}                                         ║
+║  Mode: {'DRY RUN' if dry_run else 'PRODUCTION'}                                                ║
+║                                                              ║
+║  Results:                                                   ║
+║  • Groups Processed: {success_count}/{len(processed_groups)}                                           ║
+║  • Files Generated: {total_files}                                               ║
+║  • Errors: {len(generation_errors)}                                                      ║
+║                                                              ║
+║  Output Location:                                           ║
+║  {str(versioned_output) if not dry_run else 'Dry run - no files created'}                                                              ║
+║                                                              ║
+║  Next Steps:                                                ║
+║  {'• Review generated files and run tests' if not dry_run else '• Run without --dry-run to generate actual files'}                                      ║
+║  {'• Deploy to staging environment' if not dry_run else '• Validate the plan looks correct'}                                          ║
+║  {'• Monitor for issues in production' if not dry_run else ''}                                      ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+""")
+
+# Return generation ID for chaining
+if not dry_run:
+    print(f"GENERATION_ID={generation_id}")
+    print(f"OUTPUT_DIR={versioned_output}")
+```
+
+# Error Recovery
+If generation fails:
+1. Load checkpoint from last successful group
+2. Continue from failed group
+3. Restore from backup if needed
+4. Generate partial success report
+5. Provide rollback instructions
+
+# Success Criteria
+✅ Plan loaded successfully
+✅ Groups processed in safe order
+✅ Backups created (if enabled)
+✅ Code generated with proper structure
+✅ Syntax validation passed (if enabled)
+✅ Tests run successfully (if enabled)
+✅ Comprehensive report generated
+✅ Versioned output created
