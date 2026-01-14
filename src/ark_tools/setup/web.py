@@ -780,7 +780,7 @@ HTML_TEMPLATE = """
                         host: 'localhost',
                         port: 0,
                         is_running: false,
-                        container_name: 'ark-tools-new'
+                        container_name: 'ark_tools_new'
                     };
                     
                     // Set configuration mode to create new

@@ -27,6 +27,7 @@ __license__ = "MIT"
 from typing import Dict, Any
 import os
 import logging
+from pathlib import Path
 
 # Configure default logging
 logging.basicConfig(
@@ -68,6 +69,14 @@ class ARKToolsConfig:
     # AI Configuration
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+    
+    # LLM Configuration (for embedded models)
+    LLM_MODEL_PATH = os.getenv('ARK_LLM_MODEL_PATH', str(Path.home() / '.ark_tools/models/codellama-7b-instruct.gguf'))
+    LLM_CONTEXT_SIZE = int(os.getenv('ARK_LLM_CONTEXT_SIZE', '8192'))
+    LLM_MAX_TOKENS = int(os.getenv('ARK_LLM_MAX_TOKENS', '2048'))
+    LLM_THREADS = int(os.getenv('ARK_LLM_THREADS', '8'))
+    LLM_TEMPERATURE = float(os.getenv('ARK_LLM_TEMPERATURE', '0.1'))
+    LLM_ENABLE_GPU = os.getenv('ARK_LLM_ENABLE_GPU', 'true').lower() == 'true'
     
     # Feature Flags
     ENABLE_WEBSOCKETS = os.getenv('ARK_ENABLE_WEBSOCKETS', 'true').lower() == 'true'

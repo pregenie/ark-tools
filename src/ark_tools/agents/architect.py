@@ -17,14 +17,24 @@ import json
 
 from ark_tools.agents.base import BaseAgent, AgentResult
 from ark_tools.utils.debug_logger import debug_log
+from ark_tools.llm_engine.engine import LLMAnalysisEngine
+from ark_tools.mams_core.compressor import CodeCompressor
 
 class ArchitectAgent(BaseAgent):
     """
-    Architect agent ensures system design integrity and production standards
+    Architect agent ensures system design integrity and production standards.
+    Enhanced with hybrid MAMS/LLM analysis capabilities.
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__("ark-architect", config)
+        
+        # Initialize new engines for hybrid analysis
+        self.llm_engine = LLMAnalysisEngine(
+            model_path=config.get('llm_model_path') if config else None,
+            config=config
+        )
+        self.compressor = CodeCompressor()
         
         # Architecture standards
         self.design_patterns = {
@@ -59,7 +69,10 @@ class ArchitectAgent(BaseAgent):
             'validate_source_protection',
             'review_production_readiness',
             'validate_security_standards',
-            'assess_scalability'
+            'assess_scalability',
+            'perform_hybrid_analysis',
+            'analyze_semantic_domains',
+            'suggest_code_organization'
         ]
     
     def execute_operation(self, operation: str, parameters: Dict[str, Any]) -> AgentResult:
@@ -82,6 +95,12 @@ class ArchitectAgent(BaseAgent):
                 result_data = self._validate_security_standards(parameters)
             elif operation == 'assess_scalability':
                 result_data = self._assess_scalability(parameters)
+            elif operation == 'perform_hybrid_analysis':
+                result_data = self._perform_hybrid_analysis_sync(parameters)
+            elif operation == 'analyze_semantic_domains':
+                result_data = self._analyze_semantic_domains_sync(parameters)
+            elif operation == 'suggest_code_organization':
+                result_data = self._suggest_code_organization(parameters)
             else:
                 raise ValueError(f"Unknown operation: {operation}")
             
@@ -464,3 +483,314 @@ class ArchitectAgent(BaseAgent):
             )
         
         return scalability_results
+    
+    def _perform_hybrid_analysis_sync(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Synchronous wrapper for hybrid analysis.
+        Runs async operations in a new event loop.
+        """
+        import asyncio
+        
+        # Create new event loop for async operations
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(self._perform_hybrid_analysis(parameters))
+            return result
+        finally:
+            loop.close()
+    
+    async def _perform_hybrid_analysis(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Three-tier hybrid analysis:
+        1. MAMS for structure (fast)
+        2. Compression for context reduction  
+        3. LLM for semantic understanding (deep)
+        4. Generate comprehensive reports
+        """
+        target_dir = Path(parameters.get('directory', '.'))
+        strategy = parameters.get('strategy', 'hybrid')
+        max_files = parameters.get('max_files', 50)
+        generate_report = parameters.get('generate_report', True)
+        
+        debug_log.agent(f"Starting hybrid analysis for {target_dir} with strategy: {strategy}")
+        
+        # Phase 1: MAMS structural analysis (milliseconds)
+        debug_log.agent("Phase 1: MAMS structural analysis...")
+        mams_start = time.time()
+        mams_result = self._perform_mams_analysis(target_dir)
+        mams_time = int((time.time() - mams_start) * 1000)
+        
+        if strategy == 'fast':
+            return {
+                'analysis': mams_result,
+                'type': 'structural',
+                'execution_time_ms': mams_time
+            }
+        
+        # Phase 2: Context compression
+        debug_log.agent("Phase 2: Compressing code for LLM analysis...")
+        compress_start = time.time()
+        compressed_code = self.compressor.compress_directory(
+            target_dir,
+            max_files=max_files
+        )
+        compress_time = int((time.time() - compress_start) * 1000)
+        
+        # Combine all skeletons
+        full_skeleton = "\n\n".join([
+            f"# File: {path}\n{skeleton}"
+            for path, skeleton in compressed_code.items()
+        ])
+        
+        if strategy == 'compress_only':
+            return {
+                'compressed_code': compressed_code,
+                'total_files': len(compressed_code),
+                'total_tokens': len(full_skeleton.split()),
+                'compression_time_ms': compress_time
+            }
+        
+        # Phase 3: LLM semantic analysis (seconds)
+        debug_log.agent("Phase 3: LLM semantic analysis...")
+        llm_start = time.time()
+        semantic_result = await self.llm_engine.analyze_domain_semantics(full_skeleton)
+        llm_time = int((time.time() - llm_start) * 1000)
+        
+        # Phase 4: Reconcile results
+        analysis_result = self._reconcile_analysis_results(
+            mams=mams_result,
+            semantic=semantic_result,
+            compression_stats={
+                'files_analyzed': len(compressed_code),
+                'total_tokens': len(full_skeleton.split()),
+                'compression_ratio': 0.2  # Approximate
+            },
+            timing={
+                'mams_ms': mams_time,
+                'compression_ms': compress_time,
+                'llm_ms': llm_time,
+                'total_ms': mams_time + compress_time + llm_time
+            }
+        )
+        
+        # Phase 5: Generate reports if requested
+        if generate_report:
+            debug_log.agent("Phase 5: Generating analysis reports...")
+            from ark_tools.reporting import ReportGenerator, HybridAnalysisCollector
+            from ark_tools.reporting.base import ReportConfig
+            
+            # Configure report generation
+            report_config = ReportConfig(
+                output_dir=Path(parameters.get('report_dir', '.ark_reports')),
+                generate_markdown=True,
+                generate_html=True
+            )
+            
+            # Collect data for reporting
+            collector = HybridAnalysisCollector(analysis_result)
+            report_data = collector.collect()
+            
+            # Generate reports
+            generator = ReportGenerator(config=report_config)
+            report_paths = generator.generate_reports(report_data)
+            
+            # Add report paths to result
+            analysis_result['reports'] = {
+                str(k): str(v) for k, v in report_paths.items()
+            }
+            analysis_result['report_generated'] = True
+            
+            debug_log.agent(f"Reports generated: {len(report_paths)} files")
+        
+        return analysis_result
+    
+    def _perform_mams_analysis(self, directory: Path) -> Dict[str, Any]:
+        """Perform MAMS structural analysis."""
+        try:
+            # Try to use MAMS components if available
+            from ark_tools.mams_core import ComponentExtractor
+            
+            if ComponentExtractor:
+                extractor = ComponentExtractor()
+                components = extractor.extract_from_directory(str(directory))
+                
+                return {
+                    'total_files': len(components.get('files', [])),
+                    'total_components': len(components.get('components', [])),
+                    'components': components,
+                    'mams_available': True
+                }
+        except Exception as e:
+            debug_log.error_trace("MAMS analysis failed, using fallback", exception=e)
+        
+        # Fallback analysis
+        import os
+        file_count = 0
+        component_count = 0
+        
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                if file.endswith(('.py', '.js', '.ts', '.jsx', '.tsx')):
+                    file_count += 1
+                    # Simple heuristic: assume 5 components per file
+                    component_count += 5
+        
+        return {
+            'total_files': file_count,
+            'total_components': component_count,
+            'mams_available': False,
+            'fallback_analysis': True
+        }
+    
+    def _reconcile_analysis_results(
+        self,
+        mams: Dict,
+        semantic: Dict,
+        compression_stats: Dict,
+        timing: Dict
+    ) -> Dict[str, Any]:
+        """Merge MAMS structure with LLM semantics."""
+        
+        # Use MAMS for accurate file/function counts
+        structure = {
+            'total_files': mams.get('total_files', 0),
+            'total_components': mams.get('total_components', 0),
+            'mams_available': mams.get('mams_available', False)
+        }
+        
+        # Use LLM for domain understanding
+        domains = semantic.get('domains', [])
+        
+        # Enhance domains with MAMS data if available
+        if mams.get('components'):
+            for domain in domains:
+                domain['estimated_files'] = self._estimate_domain_size(
+                    domain,
+                    mams.get('components', {})
+                )
+        
+        return {
+            'structure': structure,
+            'domains': domains,
+            'domain_relationships': semantic.get('domain_relationships', []),
+            'confidence': semantic.get('overall_confidence', 0),
+            'compression_stats': compression_stats,
+            'timing': timing,
+            'analysis_complete': True
+        }
+    
+    def _estimate_domain_size(self, domain: Dict, components: Dict) -> int:
+        """Estimate the size of a domain based on components."""
+        # Simple heuristic: count files that might belong to this domain
+        domain_keywords = domain['name'].lower().split()
+        count = 0
+        
+        for file_info in components.get('files', []):
+            file_path = file_info.get('path', '').lower()
+            if any(keyword in file_path for keyword in domain_keywords):
+                count += 1
+        
+        return count
+    
+    def _analyze_semantic_domains_sync(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Synchronous wrapper for semantic domain analysis."""
+        import asyncio
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(self._analyze_semantic_domains(parameters))
+            return result
+        finally:
+            loop.close()
+    
+    async def _analyze_semantic_domains(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze semantic domains using LLM."""
+        code_skeleton = parameters.get('code_skeleton', '')
+        context = parameters.get('context', '')
+        
+        if not code_skeleton:
+            # If no skeleton provided, compress from directory
+            directory = Path(parameters.get('directory', '.'))
+            compressed = self.compressor.compress_directory(directory, max_files=30)
+            code_skeleton = "\n\n".join([
+                f"# {path}\n{skeleton}"
+                for path, skeleton in compressed.items()
+            ])
+        
+        # Analyze domains
+        result = await self.llm_engine.analyze_domain_semantics(code_skeleton)
+        
+        # Add intent analysis if requested
+        if parameters.get('include_intent', False):
+            intent = await self.llm_engine.analyze_code_intent(code_skeleton, context)
+            result['intent'] = intent
+        
+        return result
+    
+    def _suggest_code_organization(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Suggest code organization improvements based on analysis."""
+        domains = parameters.get('domains', [])
+        current_structure = parameters.get('structure', {})
+        
+        suggestions = []
+        
+        # Analyze each domain
+        for domain in domains:
+            domain_name = domain.get('name', 'Unknown')
+            components = domain.get('primary_components', [])
+            
+            # Suggest grouping scattered components
+            if len(components) > 5:
+                suggestions.append({
+                    'type': 'consolidation',
+                    'domain': domain_name,
+                    'suggestion': f"Consider consolidating {len(components)} components in {domain_name} domain into a dedicated module",
+                    'impact': 'high',
+                    'effort': 'medium'
+                })
+            
+            # Suggest separation of concerns
+            relationships = domain.get('relationships', [])
+            if len(relationships) > 3:
+                suggestions.append({
+                    'type': 'decoupling',
+                    'domain': domain_name,
+                    'suggestion': f"Domain {domain_name} has {len(relationships)} dependencies. Consider reducing coupling.",
+                    'impact': 'medium',
+                    'effort': 'high'
+                })
+        
+        # Check for missing domains
+        if len(domains) < 3 and current_structure.get('total_files', 0) > 50:
+            suggestions.append({
+                'type': 'domain_discovery',
+                'suggestion': "Large codebase with few domains identified. Consider more granular domain boundaries.",
+                'impact': 'high',
+                'effort': 'low'
+            })
+        
+        return {
+            'suggestions': suggestions,
+            'total_suggestions': len(suggestions),
+            'estimated_impact': self._calculate_impact_score(suggestions)
+        }
+    
+    def _calculate_impact_score(self, suggestions: List[Dict]) -> float:
+        """Calculate overall impact score of suggestions."""
+        if not suggestions:
+            return 0.0
+        
+        impact_weights = {'high': 3, 'medium': 2, 'low': 1}
+        effort_weights = {'low': 3, 'medium': 2, 'high': 1}
+        
+        total_score = 0
+        for suggestion in suggestions:
+            impact = impact_weights.get(suggestion.get('impact', 'low'), 1)
+            effort = effort_weights.get(suggestion.get('effort', 'high'), 1)
+            total_score += (impact * effort) / 9.0  # Normalize to 0-1
+        
+        return min(total_score / len(suggestions), 1.0)

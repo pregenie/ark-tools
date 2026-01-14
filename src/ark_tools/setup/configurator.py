@@ -435,7 +435,7 @@ class SetupConfigurator:
                     'context': '.',
                     'dockerfile': 'Dockerfile.ark-tools'
                 },
-                'container_name': 'ark-tools',
+                'container_name': 'ark_tools_main',
                 'environment': {
                     'ARK_ENV': 'production',
                     'ARK_SECRET_KEY': '${ARK_SECRET_KEY}',
@@ -612,7 +612,7 @@ CMD ["python", "-m", "ark_tools.main"]
         if self.config.postgresql and self.config.postgresql.mode == ServiceMode.CREATE_NEW:
             compose['services']['postgres'] = {
                 'image': 'postgres:15-alpine',
-                'container_name': 'ark-postgres',
+                'container_name': 'ark_tools_postgres',
                 'environment': {
                     'POSTGRES_USER': 'ark_user',
                     'POSTGRES_PASSWORD': '${POSTGRES_PASSWORD}',
@@ -636,7 +636,7 @@ CMD ["python", "-m", "ark_tools.main"]
         if self.config.redis and self.config.redis.mode == ServiceMode.CREATE_NEW:
             compose['services']['redis'] = {
                 'image': 'redis:7-alpine',
-                'container_name': 'ark-redis',
+                'container_name': 'ark_tools_redis',
                 'command': 'redis-server --appendonly yes',
                 'volumes': [
                     'redis-data:/data'

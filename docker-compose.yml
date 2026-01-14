@@ -4,7 +4,7 @@ services:
   # PostgreSQL with pgvector extension
   postgres:
     image: pgvector/pgvector:pg15-latest
-    container_name: ark_postgres
+    container_name: ark_tools_postgres
     environment:
       POSTGRES_DB: ark_tools
       POSTGRES_USER: ark_admin
@@ -25,7 +25,7 @@ services:
   # Redis for caching and session storage
   redis:
     image: redis:7-alpine
-    container_name: ark_redis
+    container_name: ark_tools_redis
     command: redis-server --appendonly yes
     ports:
       - "6379:6379"
@@ -45,7 +45,7 @@ services:
       context: .
       dockerfile: docker/api/Dockerfile
       target: production
-    container_name: ark_api
+    container_name: ark_tools_api
     environment:
       # Database Configuration
       ARK_DATABASE_URL: postgresql://ark_admin:${POSTGRES_PASSWORD:-ark_secure_password_123}@postgres:5432/ark_tools
@@ -95,7 +95,7 @@ services:
     build:
       context: .
       dockerfile: docker/websocket/Dockerfile
-    container_name: ark_websocket
+    container_name: ark_tools_websocket
     environment:
       ARK_REDIS_URL: redis://redis:6379/0
       ARK_SECRET_KEY: ${ARK_SECRET_KEY}
@@ -118,7 +118,7 @@ services:
     build:
       context: ./docker/nginx
       dockerfile: Dockerfile
-    container_name: ark_nginx
+    container_name: ark_tools_nginx
     ports:
       - "80:80"
       - "443:443"
@@ -141,7 +141,7 @@ services:
   # Prometheus monitoring
   prometheus:
     image: prom/prometheus:latest
-    container_name: ark_prometheus
+    container_name: ark_tools_prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -161,7 +161,7 @@ services:
   # Grafana dashboard
   grafana:
     image: grafana/grafana:latest
-    container_name: ark_grafana
+    container_name: ark_tools_grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin123}
       GF_USERS_ALLOW_SIGN_UP: "false"
