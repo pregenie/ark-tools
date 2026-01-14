@@ -362,7 +362,7 @@ HTML_TEMPLATE = """
                             <div v-if="!systemResources" class="text-sm text-blue-700">
                                 <button @click="checkSystemResources" 
                                         :disabled="checkingResources"
-                                        class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+                                        class="px-3 py-1 bg-blue-600 text-white rounded text-sm">
                                     {{ checkingResources ? 'Checking...' : 'Check System Capacity' }}
                                 </button>
                             </div>
@@ -414,7 +414,7 @@ HTML_TEMPLATE = """
                         <h3 class="font-medium text-gray-900 mb-2">📁 Environment Files</h3>
                         <button @click="scanEnvironment" 
                                 :disabled="scanning"
-                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700 disabled:opacity-50">
+                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700">
                             {{ scanning ? 'Scanning...' : 'Scan for Environment Files' }}
                         </button>
 
@@ -458,7 +458,7 @@ HTML_TEMPLATE = """
                         
                         <button @click="detectServices"
                                 :disabled="detectingServices"
-                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700 disabled:opacity-50">
+                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700">
                             {{ detectingServices ? 'Detecting...' : 'Detect Services' }}
                         </button>
 
@@ -613,13 +613,13 @@ HTML_TEMPLATE = """
                         <div class="flex space-x-4">
                             <button @click="testConnections"
                                     :disabled="testing"
-                                    class="px-4 py-2 bg-yellow-600 text-white rounded hover-bg-yellow-700 disabled:opacity-50">
+                                    class="px-4 py-2 bg-yellow-600 text-white rounded hover-bg-yellow-700">
                                 {{ testing ? 'Testing...' : 'Test Connections' }}
                             </button>
 
                             <button @click="saveConfiguration"
                                     :disabled="saving"
-                                    class="px-4 py-2 bg-green-600 text-white rounded hover-bg-green-700 disabled:opacity-50">
+                                    class="px-4 py-2 bg-green-600 text-white rounded hover-bg-green-700">
                                 {{ saving ? 'Saving...' : 'Save Configuration' }}
                             </button>
                         </div>
@@ -756,7 +756,7 @@ HTML_TEMPLATE = """
                                placeholder="ark_tools"
                                class="w-full border rounded px-3 py-2">
                         <p class="text-xs text-gray-500 mt-1">
-                            {{ serviceConfigForm.mode === 'create_new' ? 'Will be created in the new container' : 'Will be created if it doesn\'t exist' }}
+                            {{ serviceConfigForm.mode === 'create_new' ? 'Will be created in the new container' : 'Will be created if it does not exist' }}
                         </p>
                     </div>
 
