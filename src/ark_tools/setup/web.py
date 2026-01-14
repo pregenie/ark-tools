@@ -76,10 +76,235 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ARK-TOOLS Setup Assistant</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🚀</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         [v-cloak] { display: none; }
+        
+        /* Reset and base styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f9fafb;
+            color: #111827;
+            line-height: 1.5;
+        }
+        
+        /* Layout utilities */
+        .container {
+            max-width: 80rem;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        
+        .min-h-screen {
+            min-height: 100vh;
+        }
+        
+        /* Typography */
+        h1 { font-size: 1.875rem; font-weight: 700; }
+        h2 { font-size: 1.25rem; font-weight: 600; }
+        h3 { font-size: 1rem; font-weight: 500; }
+        
+        .text-sm { font-size: 0.875rem; }
+        .text-xs { font-size: 0.75rem; }
+        
+        /* Colors */
+        .bg-white { background-color: white; }
+        .bg-gray-50 { background-color: #f9fafb; }
+        .bg-gray-100 { background-color: #f3f4f6; }
+        .bg-gray-200 { background-color: #e5e7eb; }
+        .bg-indigo-50 { background-color: #eef2ff; }
+        .bg-indigo-600 { background-color: #4f46e5; }
+        .bg-indigo-700 { background-color: #4338ca; }
+        .bg-green-50 { background-color: #f0fdf4; }
+        .bg-green-100 { background-color: #dcfce7; }
+        .bg-green-600 { background-color: #16a34a; }
+        .bg-amber-50 { background-color: #fffbeb; }
+        .bg-amber-100 { background-color: #fef3c7; }
+        .bg-amber-600 { background-color: #d97706; }
+        .bg-red-100 { background-color: #fee2e2; }
+        .bg-blue-50 { background-color: #eff6ff; }
+        
+        .text-gray-500 { color: #6b7280; }
+        .text-gray-600 { color: #4b5563; }
+        .text-gray-700 { color: #374151; }
+        .text-gray-900 { color: #111827; }
+        .text-white { color: white; }
+        .text-indigo-500 { color: #6366f1; }
+        .text-green-500 { color: #10b981; }
+        .text-green-600 { color: #16a34a; }
+        .text-green-800 { color: #166534; }
+        .text-amber-600 { color: #d97706; }
+        .text-amber-700 { color: #b45309; }
+        .text-amber-800 { color: #92400e; }
+        .text-amber-900 { color: #78350f; }
+        .text-red-500 { color: #ef4444; }
+        .text-red-600 { color: #dc2626; }
+        .text-red-800 { color: #991b1b; }
+        .text-blue-700 { color: #1d4ed8; }
+        .text-blue-900 { color: #1e3a8a; }
+        .text-yellow-600 { color: #ca8a04; }
+        
+        .border-gray-200 { border-color: #e5e7eb; }
+        .border-gray-300 { border-color: #d1d5db; }
+        .border-indigo-500 { border-color: #6366f1; }
+        .border-amber-400 { border-color: #fbbf24; }
+        
+        /* Spacing */
+        .p-2 { padding: 0.5rem; }
+        .p-3 { padding: 0.75rem; }
+        .p-4 { padding: 1rem; }
+        .p-6 { padding: 1.5rem; }
+        .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+        .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        .py-6 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+        .py-8 { padding-top: 2rem; padding-bottom: 2rem; }
+        .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+        .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+        .px-4 { padding-left: 1rem; padding-right: 1rem; }
+        .pb-8 { padding-bottom: 2rem; }
+        .mt-1 { margin-top: 0.25rem; }
+        .mt-2 { margin-top: 0.5rem; }
+        .mt-3 { margin-top: 0.75rem; }
+        .mt-4 { margin-top: 1rem; }
+        .mt-6 { margin-top: 1.5rem; }
+        .mt-8 { margin-top: 2rem; }
+        .mb-1 { margin-bottom: 0.25rem; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-3 { margin-bottom: 0.75rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .mb-6 { margin-bottom: 1.5rem; }
+        .ml-2 { margin-left: 0.5rem; }
+        .ml-3 { margin-left: 0.75rem; }
+        .ml-4 { margin-left: 1rem; }
+        .space-x-2 > * + * { margin-left: 0.5rem; }
+        .space-x-3 > * + * { margin-left: 0.75rem; }
+        .space-x-4 > * + * { margin-left: 1rem; }
+        .space-y-2 > * + * { margin-top: 0.5rem; }
+        .space-y-4 > * + * { margin-top: 1rem; }
+        
+        /* Borders and shadows */
+        .border { border-width: 1px; border-style: solid; }
+        .border-2 { border-width: 2px; border-style: solid; }
+        .border-dashed { border-style: dashed; }
+        .rounded { border-radius: 0.25rem; }
+        .rounded-lg { border-radius: 0.5rem; }
+        .rounded-full { border-radius: 9999px; }
+        .shadow { box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        
+        /* Flexbox */
+        .flex { display: flex; }
+        .items-start { align-items: flex-start; }
+        .items-center { align-items: center; }
+        .justify-between { justify-content: space-between; }
+        .justify-center { justify-content: center; }
+        .justify-end { justify-content: flex-end; }
+        
+        /* Forms */
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+        }
+        
+        input[type="radio"] {
+            margin-top: 0.25rem;
+        }
+        
+        /* Buttons */
+        button {
+            padding: 0.5rem 1rem;
+            border-radius: 0.25rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+            border: none;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        button:hover:not(:disabled) {
+            filter: brightness(0.9);
+        }
+        
+        /* Progress steps */
+        .progress-step {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        
+        .progress-line {
+            position: absolute;
+            height: 2px;
+            width: 100%;
+        }
+        
+        /* Hover states */
+        .hover-bg-gray-50:hover { background-color: #f9fafb; }
+        .hover-bg-indigo-700:hover { background-color: #4338ca; }
+        .hover-bg-green-700:hover { background-color: #15803d; }
+        .hover-bg-amber-700:hover { background-color: #b45309; }
+        .hover-bg-yellow-700:hover { background-color: #a16207; }
+        .hover-border-gray-300:hover { border-color: #d1d5db; }
+        
+        /* Modal */
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+        }
+        
+        .modal-content {
+            background-color: white;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            max-width: 32rem;
+            width: 100%;
+        }
+        
+        /* Utilities */
+        .relative { position: relative; }
+        .block { display: block; }
+        .inset-0 { inset: 0; }
+        .w-full { width: 100%; }
+        .w-8 { width: 2rem; }
+        .h-8 { height: 2rem; }
+        .h-0-5 { height: 0.125rem; }
+        .font-medium { font-weight: 500; }
+        .font-semibold { font-weight: 600; }
+        .font-bold { font-weight: 700; }
+        .cursor-pointer { cursor: pointer; }
+        .transition { transition: all 0.15s; }
+        .overflow-x-auto { overflow-x: auto; }
+        
+        /* Responsive utilities */
+        @media (min-width: 640px) {
+            .sm-px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+            .sm-pr-20 { padding-right: 5rem; }
+        }
+        
+        @media (min-width: 1024px) {
+            .lg-px-8 { padding-left: 2rem; padding-right: 2rem; }
+        }
+        
+        /* Animations */
         .fade-enter-active, .fade-leave-active {
             transition: opacity 0.5s;
         }
@@ -92,20 +317,20 @@ HTML_TEMPLATE = """
     <div id="app" v-cloak class="min-h-screen">
         <!-- Header -->
         <header class="bg-white shadow">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-                <h1 class="text-3xl font-bold text-gray-900">🚀 ARK-TOOLS Setup Assistant</h1>
+            <div class="container px-4 sm-px-6 lg-px-8 py-6">
+                <h1 class="font-bold text-gray-900">🚀 ARK-TOOLS Setup Assistant</h1>
                 <p class="mt-2 text-sm text-gray-600">Intelligent configuration for your code consolidation platform</p>
             </div>
         </header>
 
         <!-- Progress Steps -->
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="container px-4 sm-px-6 lg-px-8 py-8">
             <nav aria-label="Progress">
                 <ol class="flex items-center">
                     <li v-for="(step, index) in steps" :key="index"
-                        :class="['relative', index !== steps.length - 1 ? 'pr-8 sm:pr-20' : '']">
+                        :class="['relative', index !== steps.length - 1 ? 'pr-8 sm-pr-20' : '']">
                         <div class="absolute inset-0 flex items-center" v-if="index !== steps.length - 1">
-                            <div class="h-0.5 w-full" 
+                            <div class="h-0-5 w-full" 
                                 :class="currentStep > index ? 'bg-indigo-600' : 'bg-gray-200'"></div>
                         </div>
                         <div class="relative flex h-8 w-8 items-center justify-center rounded-full"
@@ -124,7 +349,7 @@ HTML_TEMPLATE = """
         </div>
 
         <!-- Main Content -->
-        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
+        <main class="container px-4 sm-px-6 lg-px-8 pb-8">
             <div class="bg-white shadow rounded-lg">
                 <div class="p-6">
                     <!-- Step 1: Environment Detection -->
@@ -189,7 +414,7 @@ HTML_TEMPLATE = """
                         <h3 class="font-medium text-gray-900 mb-2">📁 Environment Files</h3>
                         <button @click="scanEnvironment" 
                                 :disabled="scanning"
-                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50">
+                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700 disabled:opacity-50">
                             {{ scanning ? 'Scanning...' : 'Scan for Environment Files' }}
                         </button>
 
@@ -199,7 +424,7 @@ HTML_TEMPLATE = """
                                  :class="['border rounded-lg p-4 cursor-pointer transition',
                                          selectedEnv?.path === env.path ? 
                                          'border-indigo-500 bg-indigo-50' : 
-                                         'border-gray-200 hover:border-gray-300']">
+                                         'border-gray-200 hover-border-gray-300']">
                                 <div class="flex items-start justify-between">
                                     <div>
                                         <h3 class="font-medium">📁 {{ env.project_name || 'Unknown Project' }}</h3>
@@ -233,7 +458,7 @@ HTML_TEMPLATE = """
                         
                         <button @click="detectServices"
                                 :disabled="detectingServices"
-                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50">
+                                class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700 disabled:opacity-50">
                             {{ detectingServices ? 'Detecting...' : 'Detect Services' }}
                         </button>
 
@@ -262,7 +487,7 @@ HTML_TEMPLATE = """
                                                 </p>
                                             </div>
                                             <button @click="configureService(service)"
-                                                    class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                                                    class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover-bg-indigo-700">
                                                 Configure
                                             </button>
                                         </div>
@@ -275,7 +500,7 @@ HTML_TEMPLATE = """
                                     ARK-TOOLS runs best in its own optimized container. We'll help you create one.
                                 </p>
                                 <button @click="createArkToolsContainer"
-                                        class="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700">
+                                        class="px-4 py-2 bg-amber-600 text-white rounded hover-bg-amber-700">
                                     Create ARK-TOOLS Container
                                 </button>
                             </div>
@@ -302,7 +527,7 @@ HTML_TEMPLATE = """
                                                 </p>
                                             </div>
                                             <button @click="configureService(service)"
-                                                    class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                                                    class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover-bg-indigo-700">
                                                 Use This Service
                                             </button>
                                         </div>
@@ -332,7 +557,7 @@ HTML_TEMPLATE = """
                                                 </p>
                                             </div>
                                             <button @click="configureService(service)"
-                                                    class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                                                    class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover-bg-indigo-700">
                                                 Use This Service
                                             </button>
                                         </div>
@@ -388,13 +613,13 @@ HTML_TEMPLATE = """
                         <div class="flex space-x-4">
                             <button @click="testConnections"
                                     :disabled="testing"
-                                    class="px-4 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:opacity-50">
+                                    class="px-4 py-2 bg-yellow-600 text-white rounded hover-bg-yellow-700 disabled:opacity-50">
                                 {{ testing ? 'Testing...' : 'Test Connections' }}
                             </button>
 
                             <button @click="saveConfiguration"
                                     :disabled="saving"
-                                    class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50">
+                                    class="px-4 py-2 bg-green-600 text-white rounded hover-bg-green-700 disabled:opacity-50">
                                 {{ saving ? 'Saving...' : 'Save Configuration' }}
                             </button>
                         </div>
@@ -418,14 +643,14 @@ HTML_TEMPLATE = """
                     <div class="mt-8 flex justify-between">
                         <button @click="previousStep"
                                 v-if="currentStep > 0"
-                                class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50">
+                                class="px-4 py-2 border border-gray-300 rounded hover-bg-gray-50">
                             Previous
                         </button>
                         <div v-else></div>
                         
                         <button @click="nextStep"
                                 v-if="currentStep < steps.length - 1"
-                                class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                                class="px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700">
                             Next
                         </button>
                     </div>
@@ -435,8 +660,8 @@ HTML_TEMPLATE = """
 
         <!-- Service Configuration Modal -->
         <div v-if="configuringService" 
-             class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div class="bg-white rounded-lg p-6 max-w-lg w-full">
+             class="modal-backdrop">
+            <div class="modal-content">
                 <h3 class="text-lg font-medium mb-2">
                     {{ arkToolsModalTitle }}
                 </h3>
@@ -452,7 +677,7 @@ HTML_TEMPLATE = """
                         <div class="space-y-2">
                             <!-- ARK-TOOLS Container Options -->
                             <template v-if="configuringService.service_type === 'ark-tools'">
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover-bg-gray-50"
                                        :class="serviceConfigForm.mode === 'use_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'"
                                        v-if="configuringService.source !== 'create_new'">
                                     <input type="radio" v-model="serviceConfigForm.mode" value="use_existing" class="mt-1">
@@ -462,7 +687,7 @@ HTML_TEMPLATE = """
                                     </div>
                                 </label>
                                 
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover-bg-gray-50"
                                        :class="serviceConfigForm.mode === 'create_new' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
                                     <input type="radio" v-model="serviceConfigForm.mode" value="create_new" class="mt-1">
                                     <div class="ml-3">
@@ -471,7 +696,7 @@ HTML_TEMPLATE = """
                                     </div>
                                 </label>
                                 
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover-bg-gray-50"
                                        :class="serviceConfigForm.mode === 'skip' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
                                     <input type="radio" v-model="serviceConfigForm.mode" value="skip" class="mt-1">
                                     <div class="ml-3">
@@ -483,7 +708,7 @@ HTML_TEMPLATE = """
                             
                             <!-- PostgreSQL/Redis Options -->
                             <template v-else>
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover-bg-gray-50"
                                        :class="serviceConfigForm.mode === 'use_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
                                     <input type="radio" v-model="serviceConfigForm.mode" value="use_existing" class="mt-1">
                                     <div class="ml-3">
@@ -492,7 +717,7 @@ HTML_TEMPLATE = """
                                     </div>
                                 </label>
                                 
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover-bg-gray-50"
                                        :class="serviceConfigForm.mode === 'share_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
                                     <input type="radio" v-model="serviceConfigForm.mode" value="share_existing" class="mt-1">
                                     <div class="ml-3">
@@ -501,7 +726,7 @@ HTML_TEMPLATE = """
                                     </div>
                                 </label>
                                 
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover-bg-gray-50"
                                        :class="serviceConfigForm.mode === 'create_new' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
                                     <input type="radio" v-model="serviceConfigForm.mode" value="create_new" class="mt-1">
                                     <div class="ml-3">
@@ -510,7 +735,7 @@ HTML_TEMPLATE = """
                                     </div>
                                 </label>
                                 
-                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover-bg-gray-50"
                                        :class="serviceConfigForm.mode === 'skip' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
                                     <input type="radio" v-model="serviceConfigForm.mode" value="skip" class="mt-1">
                                     <div class="ml-3">
@@ -551,11 +776,11 @@ HTML_TEMPLATE = """
 
                 <div class="mt-6 flex justify-end space-x-3">
                     <button @click="configuringService = null"
-                            class="px-4 py-2 border border-gray-300 rounded hover:bg-gray-50">
+                            class="px-4 py-2 border border-gray-300 rounded hover-bg-gray-50">
                         Cancel
                     </button>
                     <button @click="saveServiceConfig"
-                            class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                            class="px-4 py-2 bg-indigo-600 text-white rounded hover-bg-indigo-700">
                         Save
                     </button>
                 </div>
