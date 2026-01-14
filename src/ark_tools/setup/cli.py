@@ -182,6 +182,70 @@ class SetupCLI:
         if services:
             self.display_services(services)
             
+            # Check system resources first
+            self.console.print("\n[bold]System Resource Check[/bold]")
+            from ark_tools.setup.system_checker import SystemChecker
+            checker = SystemChecker()
+            resources = checker.check_system_resources()
+            
+            if not resources.can_run_ark_tools:
+                self.console.print("[red]⚠️ System resource warnings detected:[/red]")
+                for warning in resources.warnings:
+                    self.console.print(f"  {warning}")
+                for rec in resources.recommendations:
+                    self.console.print(f"  {rec}")
+                
+                if not Confirm.ask("\nContinue despite warnings?", default=False):
+                    return
+            else:
+                self.console.print("[green]✅ System resources adequate[/green]")
+                self.console.print(f"  CPU: {resources.cpu_count} cores")
+                self.console.print(f"  RAM: {resources.memory_available_gb:.1f}GB available")
+                self.console.print(f"  Disk: {resources.disk_available_gb:.1f}GB available")
+                if resources.docker_available:
+                    self.console.print(f"  Docker: Available ({resources.docker_running_containers} containers running)")
+                else:
+                    self.console.print("  Docker: [yellow]Not available[/yellow]")
+            
+            # Configure ARK-TOOLS Container
+            ark_services = [s for s in services if s.service_type == 'ark-tools']
+            ark_configured = False
+            
+            if ark_services:
+                self.console.print("\n[bold]ARK-TOOLS Container Configuration[/bold]")
+                self.console.print("[green]Found existing ARK-TOOLS container![/green]")
+                ark_service = ark_services[0]
+                self.console.print(f"  Container: {ark_service.container_name}")
+                self.console.print(f"  Status: {'Running' if ark_service.is_running else 'Stopped'}")
+                
+                mode = Prompt.ask(
+                    "How to proceed?",
+                    choices=["use_existing", "create_new", "skip"],
+                    default="use_existing"
+                )
+                
+                if mode == "use_existing":
+                    self.console.print("[green]✅ Will use existing ARK-TOOLS container[/green]")
+                    ark_configured = True
+                elif mode == "create_new":
+                    self.console.print("[yellow]Will create new ARK-TOOLS container[/yellow]")
+                    ark_configured = True
+            else:
+                self.console.print("\n[bold]ARK-TOOLS Container Setup[/bold]")
+                self.console.print("[yellow]No ARK-TOOLS container detected[/yellow]")
+                
+                if resources.docker_available:
+                    if Confirm.ask("Create ARK-TOOLS container for optimized execution?", default=True):
+                        self.console.print("[green]✅ Will create ARK-TOOLS container[/green]")
+                        ark_configured = True
+                    else:
+                        self.console.print("[yellow]⚠️ Running on host (less isolated)[/yellow]")
+                else:
+                    self.console.print("[yellow]Docker not available - will run on host[/yellow]")
+            
+            # Store ARK-TOOLS configuration
+            self.orchestrator.configurator.config.use_ark_tools_container = ark_configured
+            
             # Configure PostgreSQL
             pg_services = [s for s in services if s.service_type == 'postgresql']
             if pg_services:
@@ -437,6 +501,102 @@ def tui():
     """Launch terminal UI for setup"""
     from ark_tools.setup.tui import run_tui
     run_tui()
+
+@cli.command()
+@click.option('--build', is_flag=True, help='Build containers before starting')
+@click.option('--detach', is_flag=True, default=True, help='Run containers in detached mode')
+def start(build, detach):
+    """Start ARK-TOOLS containers"""
+    import subprocess
+    from pathlib import Path
+    
+    # Check if docker-compose.yml exists
+    if not Path('docker-compose.yml').exists():
+        click.echo(click.style("No docker-compose.yml found. Run 'ark-setup' first.", fg='red'))
+        return
+    
+    click.echo(click.style("Starting ARK-TOOLS containers...", fg='cyan'))
+    
+    try:
+        # Build if requested
+        if build:
+            click.echo("Building containers...")
+            result = subprocess.run(['docker-compose', 'build'], capture_output=True, text=True)
+            if result.returncode != 0:
+                click.echo(click.style(f"Build failed: {result.stderr}", fg='red'))
+                return
+        
+        # Start containers
+        cmd = ['docker-compose', 'up']
+        if detach:
+            cmd.append('-d')
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            if detach:
+                click.echo(click.style("✅ Containers started successfully!", fg='green'))
+                click.echo("\nRunning containers:")
+                subprocess.run(['docker-compose', 'ps'])
+                
+                # Show access URLs
+                click.echo("\n📍 Access URLs:")
+                if Path('.env').exists():
+                    import re
+                    with open('.env') as f:
+                        content = f.read()
+                        port_match = re.search(r'ARK_TOOLS_PORT=(\d+)', content)
+                        port = port_match.group(1) if port_match else '8100'
+                        click.echo(f"  ARK-TOOLS: http://localhost:{port}")
+            else:
+                click.echo(click.style("Containers running in foreground mode...", fg='cyan'))
+        else:
+            click.echo(click.style(f"Failed to start containers: {result.stderr}", fg='red'))
+    except FileNotFoundError:
+        click.echo(click.style("Docker Compose not installed. Please install it first.", fg='red'))
+    except Exception as e:
+        click.echo(click.style(f"Error: {str(e)}", fg='red'))
+
+@cli.command()
+def stop():
+    """Stop ARK-TOOLS containers"""
+    import subprocess
+    from pathlib import Path
+    
+    if not Path('docker-compose.yml').exists():
+        click.echo(click.style("No docker-compose.yml found.", fg='red'))
+        return
+    
+    click.echo(click.style("Stopping ARK-TOOLS containers...", fg='cyan'))
+    
+    try:
+        result = subprocess.run(['docker-compose', 'down'], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            click.echo(click.style("✅ Containers stopped successfully!", fg='green'))
+        else:
+            click.echo(click.style(f"Failed to stop containers: {result.stderr}", fg='red'))
+    except FileNotFoundError:
+        click.echo(click.style("Docker Compose not installed.", fg='red'))
+    except Exception as e:
+        click.echo(click.style(f"Error: {str(e)}", fg='red'))
+
+@cli.command()
+def logs():
+    """View ARK-TOOLS container logs"""
+    import subprocess
+    from pathlib import Path
+    
+    if not Path('docker-compose.yml').exists():
+        click.echo(click.style("No docker-compose.yml found.", fg='red'))
+        return
+    
+    try:
+        subprocess.run(['docker-compose', 'logs', '-f'])
+    except FileNotFoundError:
+        click.echo(click.style("Docker Compose not installed.", fg='red'))
+    except KeyboardInterrupt:
+        click.echo("\nStopped viewing logs.")
 
 @cli.command()
 def validate():

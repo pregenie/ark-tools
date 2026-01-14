@@ -309,8 +309,22 @@ class ServiceDetector:
         names = container.get('Names', '').lower()
         ports = container.get('Ports', '')
         
+        # Detect ARK-TOOLS container FIRST (highest priority)
+        if any(ark in names for ark in ['ark-tool', 'ark_tool', 'arktools']) or \
+           any(ark in image for ark in ['ark-tool', 'ark_tool', 'arktools', 'arkyvus/tooling']):
+            return DetectedService(
+                service_type='ark-tools',
+                source='docker',
+                host='container',
+                port=0,  # Execution container, not a network service
+                container_name=container.get('Names'),
+                container_id=container.get('ID'),
+                is_running=container.get('State') == 'running',
+                version=image.split(':')[-1] if ':' in image else 'latest'
+            )
+        
         # Detect PostgreSQL
-        if any(pg in image for pg in ['postgres', 'pgvector', 'timescale']):
+        elif any(pg in image for pg in ['postgres', 'pgvector', 'timescale']):
             port = self._extract_port(ports, 5432)
             return DetectedService(
                 service_type='postgresql',

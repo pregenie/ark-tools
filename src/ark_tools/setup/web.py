@@ -129,8 +129,64 @@ HTML_TEMPLATE = """
                 <div class="p-6">
                     <!-- Step 1: Environment Detection -->
                     <div v-show="currentStep === 0">
-                        <h2 class="text-xl font-semibold mb-4">🔍 Environment Detection</h2>
+                        <h2 class="text-xl font-semibold mb-4">🔍 Environment & System Check</h2>
                         
+                        <!-- System Resources Check -->
+                        <div class="mb-6 p-4 bg-blue-50 rounded-lg">
+                            <h3 class="font-medium text-blue-900 mb-2">💻 System Resources</h3>
+                            <div v-if="!systemResources" class="text-sm text-blue-700">
+                                <button @click="checkSystemResources" 
+                                        :disabled="checkingResources"
+                                        class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+                                    {{ checkingResources ? 'Checking...' : 'Check System Capacity' }}
+                                </button>
+                            </div>
+                            <div v-else class="space-y-2">
+                                <div class="text-sm">
+                                    <span class="font-medium">CPU:</span> {{ systemResources.cpu_count }} cores
+                                    <span :class="systemResources.cpu_count >= 4 ? 'text-green-600' : 'text-amber-600'">
+                                        ({{ systemResources.cpu_count >= 4 ? '✓ Good' : '⚠️ Limited' }})
+                                    </span>
+                                </div>
+                                <div class="text-sm">
+                                    <span class="font-medium">RAM:</span> {{ systemResources.memory_available_gb.toFixed(1) }}GB available
+                                    <span :class="systemResources.memory_available_gb >= 4 ? 'text-green-600' : 'text-amber-600'">
+                                        ({{ systemResources.memory_available_gb >= 4 ? '✓ Good' : '⚠️ Limited' }})
+                                    </span>
+                                </div>
+                                <div class="text-sm">
+                                    <span class="font-medium">Disk:</span> {{ systemResources.disk_available_gb.toFixed(1) }}GB available
+                                    <span :class="systemResources.disk_available_gb >= 10 ? 'text-green-600' : 'text-amber-600'">
+                                        ({{ systemResources.disk_available_gb >= 10 ? '✓ Good' : '⚠️ Limited' }})
+                                    </span>
+                                </div>
+                                <div class="text-sm">
+                                    <span class="font-medium">Docker:</span> 
+                                    <span :class="systemResources.docker_available ? 'text-green-600' : 'text-red-600'">
+                                        {{ systemResources.docker_available ? '✓ Available' : '✗ Not Available' }}
+                                    </span>
+                                    <span v-if="systemResources.docker_available">
+                                        ({{ systemResources.docker_running_containers }} containers running)
+                                    </span>
+                                </div>
+                                
+                                <div v-if="systemResources.warnings && systemResources.warnings.length > 0" 
+                                     class="mt-3 p-2 bg-amber-100 rounded">
+                                    <div v-for="warning in systemResources.warnings" :key="warning" class="text-sm text-amber-800">
+                                        {{ warning }}
+                                    </div>
+                                </div>
+                                
+                                <div v-if="systemResources.recommendations && systemResources.recommendations.length > 0" 
+                                     class="mt-2">
+                                    <div v-for="rec in systemResources.recommendations" :key="rec" class="text-sm text-blue-700">
+                                        {{ rec }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h3 class="font-medium text-gray-900 mb-2">📁 Environment Files</h3>
                         <button @click="scanEnvironment" 
                                 :disabled="scanning"
                                 class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 disabled:opacity-50">
@@ -171,7 +227,7 @@ HTML_TEMPLATE = """
                     <div v-show="currentStep === 1">
                         <h2 class="text-xl font-semibold mb-4">🔍 Service Discovery</h2>
                         <p class="text-sm text-gray-600 mb-4">
-                            ARK-TOOLS needs PostgreSQL for data storage and Redis for caching (optional).
+                            ARK-TOOLS needs an execution container, PostgreSQL for data storage, and Redis for caching (optional).
                             We'll check what you have running, or help you create new services.
                         </p>
                         
@@ -182,6 +238,48 @@ HTML_TEMPLATE = """
                         </button>
 
                         <div v-if="detectedServices.length > 0" class="space-y-4">
+                            <!-- ARK-TOOLS Container -->
+                            <div v-if="arkToolsServices.length > 0">
+                                <h3 class="font-medium text-gray-900 mb-2">🚀 ARK-TOOLS Execution Container</h3>
+                                <p class="text-sm text-gray-600 mb-3">
+                                    Found existing ARK-TOOLS container. You can use this to run your system efficiently.
+                                </p>
+                                <div class="space-y-2">
+                                    <div v-for="service in arkToolsServices" :key="service.id"
+                                         class="border rounded-lg p-4 bg-green-50">
+                                        <div class="flex items-start justify-between">
+                                            <div>
+                                                <div class="flex items-center space-x-2">
+                                                    <span :class="service.is_running ? 'text-green-500' : 'text-red-500'">
+                                                        {{ service.is_running ? '🟢' : '🔴' }}
+                                                    </span>
+                                                    <span class="font-medium">ARK-TOOLS Container</span>
+                                                    <span>🐳</span>
+                                                </div>
+                                                <p class="text-sm text-gray-600">Container: {{ service.container_name }}</p>
+                                                <p class="text-sm text-gray-500">
+                                                    Version: {{ service.version || 'latest' }}
+                                                </p>
+                                            </div>
+                                            <button @click="configureService(service)"
+                                                    class="px-3 py-1 text-sm bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                                                Configure
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="border-2 border-dashed border-amber-400 rounded-lg p-4 bg-amber-50">
+                                <h3 class="font-medium text-amber-900 mb-2">⚠️ No ARK-TOOLS Container Found</h3>
+                                <p class="text-sm text-amber-700 mb-3">
+                                    ARK-TOOLS runs best in its own optimized container. We'll help you create one.
+                                </p>
+                                <button @click="createArkToolsContainer"
+                                        class="px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700">
+                                    Create ARK-TOOLS Container
+                                </button>
+                            </div>
+
                             <!-- PostgreSQL Services -->
                             <div v-if="postgresServices.length > 0">
                                 <h3 class="font-medium text-gray-900 mb-2">PostgreSQL Services</h3>
@@ -246,7 +344,7 @@ HTML_TEMPLATE = """
                         <div v-else-if="!detectingServices" class="text-gray-500">
                             <p>No services detected yet. Click "Detect Services" to scan.</p>
                             <div class="mt-4 p-4 bg-blue-50 rounded-lg">
-                                <p class="text-sm font-medium text-blue-900">💡 Don't have PostgreSQL or Redis?</p>
+                                <p class="text-sm font-medium text-blue-900">💡 {{ noServicesHintTitle }}</p>
                                 <p class="text-sm text-blue-700 mt-1">No problem! After detection, ARK-TOOLS can:</p>
                                 <ul class="text-sm text-blue-700 mt-2 ml-4">
                                     <li>• Create new Docker containers for you</li>
@@ -340,10 +438,10 @@ HTML_TEMPLATE = """
              class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div class="bg-white rounded-lg p-6 max-w-lg w-full">
                 <h3 class="text-lg font-medium mb-2">
-                    How should ARK-TOOLS use {{ configuringService.service_type }}?
+                    {{ arkToolsModalTitle }}
                 </h3>
                 <p class="text-sm text-gray-600 mb-4">
-                    Found {{ configuringService.service_type }} at {{ configuringService.host }}:{{ configuringService.port }}
+                    {{ arkToolsModalDescription }}
                 </p>
                 
                 <div class="space-y-4">
@@ -352,41 +450,75 @@ HTML_TEMPLATE = """
                             Choose an option:
                         </label>
                         <div class="space-y-2">
-                            <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                                   :class="serviceConfigForm.mode === 'use_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                                <input type="radio" v-model="serviceConfigForm.mode" value="use_existing" class="mt-1">
-                                <div class="ml-3">
-                                    <div class="font-medium">Use This Service (Recommended)</div>
-                                    <div class="text-sm text-gray-600">Connect ARK-TOOLS directly to this existing {{ configuringService.service_type }}</div>
-                                </div>
-                            </label>
+                            <!-- ARK-TOOLS Container Options -->
+                            <template v-if="configuringService.service_type === 'ark-tools'">
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                       :class="serviceConfigForm.mode === 'use_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'"
+                                       v-if="configuringService.source !== 'create_new'">
+                                    <input type="radio" v-model="serviceConfigForm.mode" value="use_existing" class="mt-1">
+                                    <div class="ml-3">
+                                        <div class="font-medium">Use This Container (Recommended)</div>
+                                        <div class="text-sm text-gray-600">Run ARK-TOOLS in this existing optimized container</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                       :class="serviceConfigForm.mode === 'create_new' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="radio" v-model="serviceConfigForm.mode" value="create_new" class="mt-1">
+                                    <div class="ml-3">
+                                        <div class="font-medium">{{ configuringService.source === 'create_new' ? 'Create New Container' : 'Replace with New Container' }}</div>
+                                        <div class="text-sm text-gray-600">Create a fresh Docker container optimized for ARK-TOOLS</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                       :class="serviceConfigForm.mode === 'skip' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="radio" v-model="serviceConfigForm.mode" value="skip" class="mt-1">
+                                    <div class="ml-3">
+                                        <div class="font-medium">Run on Host (Advanced)</div>
+                                        <div class="text-sm text-gray-600">Run ARK-TOOLS directly on your machine without containerization</div>
+                                    </div>
+                                </label>
+                            </template>
                             
-                            <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                                   :class="serviceConfigForm.mode === 'share_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                                <input type="radio" v-model="serviceConfigForm.mode" value="share_existing" class="mt-1">
-                                <div class="ml-3">
-                                    <div class="font-medium">Share With Other Apps</div>
-                                    <div class="text-sm text-gray-600">Use this service but with separate database/keyspace to avoid conflicts</div>
-                                </div>
-                            </label>
-                            
-                            <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                                   :class="serviceConfigForm.mode === 'create_new' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                                <input type="radio" v-model="serviceConfigForm.mode" value="create_new" class="mt-1">
-                                <div class="ml-3">
-                                    <div class="font-medium">Create New Container</div>
-                                    <div class="text-sm text-gray-600">Ignore this service and create a fresh Docker container for ARK-TOOLS only</div>
-                                </div>
-                            </label>
-                            
-                            <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                                   :class="serviceConfigForm.mode === 'skip' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
-                                <input type="radio" v-model="serviceConfigForm.mode" value="skip" class="mt-1">
-                                <div class="ml-3">
-                                    <div class="font-medium">Don't Use {{ configuringService.service_type }}</div>
-                                    <div class="text-sm text-gray-600">Skip this service ({{ configuringService.service_type === 'postgresql' ? 'will use SQLite fallback' : 'no caching' }})</div>
-                                </div>
-                            </label>
+                            <!-- PostgreSQL/Redis Options -->
+                            <template v-else>
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                       :class="serviceConfigForm.mode === 'use_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="radio" v-model="serviceConfigForm.mode" value="use_existing" class="mt-1">
+                                    <div class="ml-3">
+                                        <div class="font-medium">Use This Service (Recommended)</div>
+                                        <div class="text-sm text-gray-600">Connect ARK-TOOLS directly to this existing {{ configuringService.service_type }}</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                       :class="serviceConfigForm.mode === 'share_existing' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="radio" v-model="serviceConfigForm.mode" value="share_existing" class="mt-1">
+                                    <div class="ml-3">
+                                        <div class="font-medium">Share With Other Apps</div>
+                                        <div class="text-sm text-gray-600">Use this service but with separate database/keyspace to avoid conflicts</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                       :class="serviceConfigForm.mode === 'create_new' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="radio" v-model="serviceConfigForm.mode" value="create_new" class="mt-1">
+                                    <div class="ml-3">
+                                        <div class="font-medium">Create New Container</div>
+                                        <div class="text-sm text-gray-600">Ignore this service and create a fresh Docker container for ARK-TOOLS only</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-start p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                                       :class="serviceConfigForm.mode === 'skip' ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'">
+                                    <input type="radio" v-model="serviceConfigForm.mode" value="skip" class="mt-1">
+                                    <div class="ml-3">
+                                        <div class="font-medium">{{ skipServiceLabel }}</div>
+                                        <div class="text-sm text-gray-600">Skip this service ({{ configuringService.service_type === 'postgresql' ? 'will use SQLite fallback' : 'no caching' }})</div>
+                                    </div>
+                                </label>
+                            </template>
                         </div>
                     </div>
 
@@ -472,6 +604,10 @@ HTML_TEMPLATE = """
                     saving: false,
                     saveStatus: null,
                     
+                    // System resources
+                    systemResources: null,
+                    checkingResources: false,
+                    
                     // WebSocket
                     ws: null
                 };
@@ -483,6 +619,40 @@ HTML_TEMPLATE = """
                 },
                 redisServices() {
                     return this.detectedServices.filter(s => s.service_type === 'redis');
+                },
+                arkToolsServices() {
+                    return this.detectedServices.filter(s => s.service_type === 'ark-tools');
+                },
+                // Computed properties for strings with apostrophes
+                noServicesHintTitle() {
+                    return "Don't have PostgreSQL or Redis?";
+                },
+                arkToolsModalTitle() {
+                    if (!this.configuringService) return '';
+                    if (this.configuringService.service_type === 'ark-tools') {
+                        return 'Configure ARK-TOOLS Execution Container';
+                    }
+                    return 'How should ARK-TOOLS use ' + this.configuringService.service_type + '?';
+                },
+                arkToolsModalDescription() {
+                    if (!this.configuringService) return '';
+                    if (this.configuringService.service_type === 'ark-tools') {
+                        if (this.configuringService.source === 'create_new') {
+                            return 'Create a new ARK-TOOLS container optimized for your system';
+                        }
+                        return 'Found ARK-TOOLS container: ' + this.configuringService.container_name;
+                    }
+                    return 'Found ' + this.configuringService.service_type + ' at ' + this.configuringService.host + ':' + this.configuringService.port;
+                },
+                createNewServiceTitle() {
+                    return "Don't worry! ARK-TOOLS will create this for you.";
+                },
+                skipServiceTitle() {
+                    return "I'll configure this manually later.";
+                },
+                skipServiceLabel() {
+                    if (!this.configuringService) return '';
+                    return "Don't Use " + this.configuringService.service_type;
                 }
             },
             
@@ -587,6 +757,37 @@ HTML_TEMPLATE = """
                     }
                 },
                 
+                async checkSystemResources() {
+                    this.checkingResources = true;
+                    try {
+                        const response = await fetch('/api/check-resources', {
+                            method: 'POST'
+                        });
+                        const data = await response.json();
+                        this.systemResources = data.resources;
+                    } catch (error) {
+                        console.error('Failed to check system resources:', error);
+                    } finally {
+                        this.checkingResources = false;
+                    }
+                },
+                
+                async createArkToolsContainer() {
+                    // This will create a new ARK-TOOLS container
+                    const newService = {
+                        service_type: 'ark-tools',
+                        source: 'create_new',
+                        host: 'localhost',
+                        port: 0,
+                        is_running: false,
+                        container_name: 'ark-tools-new'
+                    };
+                    
+                    // Set configuration mode to create new
+                    this.serviceConfigForm.mode = 'create_new';
+                    this.configuringService = newService;
+                },
+                
                 async testConnections() {
                     this.testing = true;
                     this.testResults = null;
@@ -684,6 +885,36 @@ async def detect_environment(request: DetectionRequest):
     return {
         "environments": [env.__dict__ for env in environments],
         "parent_env": parent_env.__dict__ if parent_env else None
+    }
+
+@app.post("/api/check-resources")
+async def check_resources():
+    """Check system resources"""
+    from ark_tools.setup.system_checker import SystemChecker
+    
+    checker = SystemChecker()
+    resources = checker.check_system_resources()
+    
+    return {
+        "resources": {
+            "cpu_count": resources.cpu_count,
+            "cpu_percent": resources.cpu_percent,
+            "memory_total_gb": resources.memory_total_gb,
+            "memory_available_gb": resources.memory_available_gb,
+            "memory_percent": resources.memory_percent,
+            "disk_total_gb": resources.disk_total_gb,
+            "disk_available_gb": resources.disk_available_gb,
+            "disk_percent": resources.disk_percent,
+            "docker_available": resources.docker_available,
+            "docker_running_containers": resources.docker_running_containers,
+            "docker_images_size_gb": resources.docker_images_size_gb,
+            "docker_containers_size_gb": resources.docker_containers_size_gb,
+            "platform": resources.platform,
+            "python_version": resources.python_version,
+            "can_run_ark_tools": resources.can_run_ark_tools,
+            "warnings": resources.warnings,
+            "recommendations": resources.recommendations
+        }
     }
 
 @app.post("/api/detect/services")

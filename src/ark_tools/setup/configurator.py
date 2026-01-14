@@ -90,6 +90,7 @@ class ARKToolsConfig:
     deployment_mode: str = "integrated"  # standalone, integrated, hybrid
     create_docker_compose: bool = True
     docker_compose_profile: str = "existing-infra"  # full-stack, minimal, existing-infra
+    use_ark_tools_container: bool = False  # Whether to run ARK-TOOLS in a container
     
     # MAMS integration
     mams_base_path: Optional[str] = None
@@ -420,6 +421,122 @@ class SetupConfigurator:
         
         return False
     
+    def generate_ark_tools_container_config(self) -> Dict[str, Any]:
+        """
+        Generate Docker Compose configuration for ARK-TOOLS container
+        
+        Returns:
+            Docker Compose service definition for ARK-TOOLS
+        """
+        return {
+            'ark-tools': {
+                'image': 'ark-tools:latest',
+                'build': {
+                    'context': '.',
+                    'dockerfile': 'Dockerfile.ark-tools'
+                },
+                'container_name': 'ark-tools',
+                'environment': {
+                    'ARK_ENV': 'production',
+                    'ARK_SECRET_KEY': '${ARK_SECRET_KEY}',
+                    'ARK_JWT_SECRET_KEY': '${ARK_JWT_SECRET_KEY}',
+                    'DATABASE_URL': '${DATABASE_URL}',
+                    'REDIS_URL': '${REDIS_URL}',
+                    'PYTHONUNBUFFERED': '1'
+                },
+                'volumes': [
+                    './config:/app/config',
+                    './data:/app/data',
+                    './logs:/app/logs',
+                    '/var/run/docker.sock:/var/run/docker.sock:ro'  # For Docker operations
+                ],
+                'ports': [
+                    '${ARK_TOOLS_PORT:-8100}:8000'
+                ],
+                'restart': 'unless-stopped',
+                'networks': ['ark-network'],
+                'depends_on': self._get_ark_tools_dependencies(),
+                'healthcheck': {
+                    'test': ['CMD', 'curl', '-f', 'http://localhost:8000/health'],
+                    'interval': '30s',
+                    'timeout': '10s',
+                    'retries': 3
+                },
+                'deploy': {
+                    'resources': {
+                        'limits': {
+                            'cpus': '2.0',
+                            'memory': '2G'
+                        },
+                        'reservations': {
+                            'cpus': '0.5',
+                            'memory': '512M'
+                        }
+                    }
+                }
+            }
+        }
+    
+    def _get_ark_tools_dependencies(self) -> List[str]:
+        """Get dependencies for ARK-TOOLS container"""
+        deps = []
+        if self.config.postgresql and self.config.postgresql.host == 'postgres':
+            deps.append('postgres')
+        if self.config.redis and self.config.redis.host == 'redis':
+            deps.append('redis')
+        return deps
+    
+    def create_ark_tools_dockerfile(self) -> str:
+        """
+        Generate Dockerfile for ARK-TOOLS container
+        
+        Returns:
+            Dockerfile content as string
+        """
+        return '''FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \\
+    curl \\
+    git \\
+    build-essential \\
+    postgresql-client \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY src/ ./src/
+COPY ark-setup .
+COPY setup.py .
+
+# Install ARK-TOOLS
+RUN pip install -e .
+
+# Create necessary directories
+RUN mkdir -p /app/config /app/data /app/logs
+
+# Set up non-root user
+RUN useradd -m -s /bin/bash arkuser && \\
+    chown -R arkuser:arkuser /app
+USER arkuser
+
+# Expose port
+EXPOSE 8000
+
+# Health check script
+COPY --chown=arkuser:arkuser docker/healthcheck.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Entry point
+CMD ["python", "-m", "ark_tools.main"]
+'''
+    
     def create_minimal_config(self) -> None:
         """Create minimal configuration without external dependencies"""
         # Use SQLite for database (fallback mode)
@@ -467,3 +584,72 @@ class SetupConfigurator:
             issues.append("No AI provider keys (AI features disabled)")
         
         return len(issues) == 0, issues
+    
+    def generate_docker_compose(self) -> Dict[str, Any]:
+        """
+        Generate complete Docker Compose configuration
+        
+        Returns:
+            Docker Compose configuration dict
+        """
+        compose = {
+            'version': '3.8',
+            'services': {},
+            'networks': {
+                'ark-network': {
+                    'driver': 'bridge'
+                }
+            },
+            'volumes': {}
+        }
+        
+        # Add ARK-TOOLS container if configured
+        if self.config.use_ark_tools_container:
+            ark_config = self.generate_ark_tools_container_config()
+            compose['services'].update(ark_config)
+        
+        # Add PostgreSQL if creating new
+        if self.config.postgresql and self.config.postgresql.mode == ServiceMode.CREATE_NEW:
+            compose['services']['postgres'] = {
+                'image': 'postgres:15-alpine',
+                'container_name': 'ark-postgres',
+                'environment': {
+                    'POSTGRES_USER': 'ark_user',
+                    'POSTGRES_PASSWORD': '${POSTGRES_PASSWORD}',
+                    'POSTGRES_DB': 'ark_tools'
+                },
+                'volumes': [
+                    'postgres-data:/var/lib/postgresql/data'
+                ],
+                'ports': ['5432:5432'],
+                'networks': ['ark-network'],
+                'healthcheck': {
+                    'test': ['CMD-SHELL', 'pg_isready -U ark_user'],
+                    'interval': '10s',
+                    'timeout': '5s',
+                    'retries': 5
+                }
+            }
+            compose['volumes']['postgres-data'] = {}
+        
+        # Add Redis if creating new
+        if self.config.redis and self.config.redis.mode == ServiceMode.CREATE_NEW:
+            compose['services']['redis'] = {
+                'image': 'redis:7-alpine',
+                'container_name': 'ark-redis',
+                'command': 'redis-server --appendonly yes',
+                'volumes': [
+                    'redis-data:/data'
+                ],
+                'ports': ['6379:6379'],
+                'networks': ['ark-network'],
+                'healthcheck': {
+                    'test': ['CMD', 'redis-cli', 'ping'],
+                    'interval': '10s',
+                    'timeout': '5s',
+                    'retries': 5
+                }
+            }
+            compose['volumes']['redis-data'] = {}
+        
+        return compose

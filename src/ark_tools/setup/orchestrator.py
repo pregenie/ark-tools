@@ -297,6 +297,26 @@ class SetupOrchestrator:
         output_path = Path(output_dir)
         success, files = self.configurator.config.save(output_path)
         
+        # Generate Docker Compose if needed
+        if self.configurator.config.create_docker_compose:
+            compose_config = self.configurator.generate_docker_compose()
+            if compose_config.get('services'):
+                import yaml
+                compose_file = output_path / 'docker-compose.yml'
+                with open(compose_file, 'w') as f:
+                    yaml.dump(compose_config, f, default_flow_style=False, sort_keys=False)
+                files.append('docker-compose.yml')
+                self.log("Generated docker-compose.yml")
+                
+                # Generate Dockerfile for ARK-TOOLS if needed
+                if self.configurator.config.use_ark_tools_container:
+                    dockerfile_content = self.configurator.create_ark_tools_dockerfile()
+                    dockerfile = output_path / 'Dockerfile.ark-tools'
+                    with open(dockerfile, 'w') as f:
+                        f.write(dockerfile_content)
+                    files.append('Dockerfile.ark-tools')
+                    self.log("Generated Dockerfile.ark-tools")
+        
         if success:
             self.log(f"Configuration saved successfully: {', '.join(files)}")
         else:
